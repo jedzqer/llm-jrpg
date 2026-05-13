@@ -54,10 +54,90 @@ export async function POST(req: Request) {
 
   const normalizedMessages = normalizeChatMessages(messages);
 
+  // reasoning_content values from DB, one per historical assistant message in order
+  const historicalReasoningContents: string[] = normalizedMessages
+    .filter((m) => m.role === "assistant")
+    .map((m) => ((m.metadata as Record<string, unknown> | undefined)?.reasoning_content as string) ?? "");
+
+  // reasoning_content captured from the current in-flight step's response
+  let stepReasoningContent = "";
+  // all reasoning_content accumulated across all steps of this request
+  let totalReasoningContent = "";
+
   const provider = createOpenAI({
     apiKey,
     name: providerName,
     baseURL,
+    fetch: async (url, options) => {
+      if (options?.body && typeof options.body === "string") {
+        const body = JSON.parse(options.body) as {
+          messages?: Array<{ role: string; reasoning_content?: string }>;
+        };
+        if (Array.isArray(body.messages)) {
+          // Build the full list of reasoning_content to inject:
+          // historical assistant messages first, then the current step (if any)
+          const rcQueue = [...historicalReasoningContents];
+          if (stepReasoningContent) rcQueue.push(stepReasoningContent);
+
+          let assistantIdx = 0;
+          body.messages = body.messages.map((msg) => {
+            // rewrite developer → system
+            const out = msg.role === "developer" ? { ...msg, role: "system" } : { ...msg };
+            if (out.role === "assistant") {
+              const rc = rcQueue[assistantIdx] ?? "";
+              if (rc) out.reasoning_content = rc;
+              assistantIdx++;
+            }
+            return out;
+          });
+        }
+        options = { ...options, body: JSON.stringify(body) };
+      }
+
+      // reset before this step's response
+      stepReasoningContent = "";
+      const response = await fetch(url, options);
+
+      // intercept SSE stream to capture reasoning_content
+      if (!response.body) return response;
+      const reader = response.body.getReader();
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          const decoder = new TextDecoder();
+          try {
+            while (true) {
+              const { done, value } = await reader.read();
+              if (done) break;
+              const text = decoder.decode(value, { stream: true });
+              for (const line of text.split("\n")) {
+                if (line.startsWith("data: ") && line !== "data: [DONE]") {
+                  try {
+                    const data = JSON.parse(line.slice(6)) as {
+                      choices?: Array<{ delta?: { reasoning_content?: string } }>;
+                    };
+                    const rc = data?.choices?.[0]?.delta?.reasoning_content;
+                    if (rc) {
+                      stepReasoningContent += rc;
+                      totalReasoningContent += rc;
+                    }
+                  } catch {
+                    // non-JSON line, skip
+                  }
+                }
+              }
+              controller.enqueue(value);
+            }
+          } finally {
+            controller.close();
+          }
+        },
+      });
+      return new Response(stream, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    },
   });
 
   const result = streamText({
@@ -66,17 +146,21 @@ export async function POST(req: Request) {
     messages: await convertToModelMessages(normalizedMessages),
     stopWhen: stepCountIs(2),
     tools: gameTools,
-    providerOptions: {
-      [providerName]: {
-        systemMessageMode: "system",
-      },
-    },
   });
 
   return result.toUIMessageStreamResponse({
     originalMessages: normalizedMessages,
     onFinish: ({ responseMessage }) => {
-      saveChatMessages(sessionId, [...normalizedMessages, responseMessage]);
+      const toSave = totalReasoningContent
+        ? {
+            ...responseMessage,
+            metadata: {
+              ...(responseMessage.metadata as object | undefined),
+              reasoning_content: totalReasoningContent,
+            },
+          }
+        : responseMessage;
+      saveChatMessages(sessionId, [...normalizedMessages, toSave]);
     },
   });
 }

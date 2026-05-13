@@ -4,7 +4,13 @@
       "Bash(npx ctx7@latest *)",
       "Bash(MSYS_NO_PATHCONV=1 npx ctx7@latest *)",
       "Bash(npm run *)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(npm install *)",
+      "Bash(node -e \"require\\('@ai-sdk/openai-compatible'\\); console.log\\('ok'\\)\")",
+      "*",
+      "Bash(npm view *)",
+      "Bash(npm pack *)",
+      "Bash(npm uninstall *)"
     ]
   }
 }
