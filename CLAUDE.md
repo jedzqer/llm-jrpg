@@ -19,7 +19,7 @@ No test runner is configured yet.
 Copy `.env.example` to `.env.local` and fill in:
 
 ```
-OPENAI_API_KEY=...
+OPENAI_COMPATIBLE_API_KEY=...
 OPENAI_MODEL=gpt-4o-mini
 ```
 

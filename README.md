@@ -15,8 +15,8 @@ AI创作剧情流动，编排NPC实体，在每次对话后如果引入了新的
 
 ## 当前状态
 
-项目基础框架已经完成，但 LLM 调用仍然是占位实现。
-首页已经替换为项目介绍页，`/api/chat` 也已经预留好，后续可以直接接入真实的流式对话逻辑。
+项目基础框架已经完成，`/api/chat` 已接入真实的流式 LLM 调用，并兼容 OpenAI-compatible API。
+首页已经替换为项目介绍页，后续主要工作会落在游戏状态推进、工具调用编排和前端聊天体验。
 
 ## 目录结构
 
@@ -60,7 +60,26 @@ Windows PowerShell 下可以使用：
 Copy-Item .env.example .env.local
 ```
 
-3. 在 `.env.local` 中填入 `OPENAI_API_KEY`
+3. 在 `.env.local` 中填入模型服务配置
+
+官方 OpenAI：
+
+```env
+OPENAI_COMPATIBLE_API_KEY=your_openai_api_key
+OPENAI_MODEL=gpt-4o-mini
+```
+
+OpenAI-compatible API（例如代理网关或兼容服务）：
+
+```env
+OPENAI_COMPATIBLE_API_KEY=your_provider_api_key
+OPENAI_MODEL=your-model-id
+OPENAI_BASE_URL=https://your-provider.example.com/v1
+OPENAI_PROVIDER_NAME=your-provider
+```
+
+- `OPENAI_BASE_URL` 留空时默认走官方 `https://api.openai.com/v1`
+- `OPENAI_PROVIDER_NAME` 主要用于给 AI SDK 内部 provider 标识命名，默认值是 `openai`
 
 4. 启动开发服务器：
 
@@ -72,15 +91,13 @@ npm run dev
 
 ## 建议的下一步开发顺序
 
-1. 把 `src/app/api/chat/route.ts` 从占位实现替换成真实的 `streamText`
-2. 增加基于 `@ai-sdk/react` 的前端聊天界面
-3. 为 `WorldState` 接入持久化，原型期建议 `SQLite + Prisma`
-4. 拆分叙事职责：
+1. 为 `WorldState` 接入持久化，原型期建议 `SQLite + Prisma`
+2. 拆分叙事职责：
    - system prompt
    - NPC 记忆
    - 任务逻辑
    - 世界事件工具
-5. 增加 RPG 专用工具能力：
+3. 增加 RPG 专用工具能力：
    - 掷骰
    - 背包修改
    - 任务推进
@@ -108,4 +125,3 @@ npm run dev
 - `src/lib/game/schema.ts` 内置了一个前哨站场景的基础世界状态
 - `src/lib/ai/prompts.ts` 提供了一个绑定当前世界状态的基础系统提示词
 - 首页已经替换为项目落地页，不再使用默认的 Next.js 欢迎页
-

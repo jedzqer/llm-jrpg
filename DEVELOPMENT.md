@@ -44,7 +44,8 @@ export async function POST(req: Request) {
 }
 ```
 
-- `openai()` 自动读 `process.env.OPENAI_API_KEY`，不用 `createOpenAI`
+- 默认可直接用 `openai()`；若要接 OpenAI-compatible 服务，则改用 `createOpenAI({ baseURL, name })`
+- 本项目显式读取 `OPENAI_COMPATIBLE_API_KEY` 传给 provider，不依赖 SDK 默认的 `OPENAI_API_KEY`
 - `convertToModelMessages` 在部分文档示例中带 `await`、部分不带 —— 统一 `await` 对同步返回也安全
 - 响应用 `result.toUIMessageStreamResponse()`，前端 `useChat` 才能解析流
 - 请求体的 `messages` 类型是 `UIMessage[]`（前端 `useChat` 的消息形态），服务端转成 `ModelMessage[]` 后才能喂给 `streamText`
@@ -80,9 +81,11 @@ sendMessage({ role: "user", parts: [...] });  // 多模态
 - 玩家动作**不会**真正改变 NPC 态度、物品、境界；即便叙事这么写，下一轮 prompt 又被重置
 - 要做真 state 推进，需把 WorldState 拎到运行期（client store / server session / DB），每次请求动态拼 system prompt，并让模型通过 tool-call 产出状态变更
 
-### 模型切换
+### 模型与服务切换
 
-改 `.env.local` 的 `OPENAI_MODEL` 即可，不用动代码。`gpt-4o-mini` 之外的任何 `@ai-sdk/openai` 支持的模型名都行。
+- 改 `.env.local` 的 `OPENAI_MODEL` 即可，不用动代码。`gpt-4o-mini` 之外的任何 `@ai-sdk/openai` 支持的模型名都行。
+- 如果不是官方 OpenAI，而是 OpenAI-compatible 服务，额外设置 `OPENAI_BASE_URL`。
+- `OPENAI_PROVIDER_NAME` 只影响 AI SDK 内部 provider 名称标识，默认保留 `openai` 即可。
 
 ## 验证清单
 
