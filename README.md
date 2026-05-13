@@ -80,27 +80,7 @@ npm run dev
    - 任务推进
    - 场景切换
 
-## 推荐架构
+## 开发计划
 
-### 前端
-
-- `src/app/`：页面、路由和布局
-- `src/components/chat/`：消息列表、输入框、头像、选项组件
-- `src/components/game/`：属性面板、背包、任务日志、小地图
-- `src/lib/client/`：自定义 transport 和前端辅助逻辑
-
-### 后端
-
-- `src/app/api/chat/route.ts`：主对话入口
-- `src/app/api/config/route.ts`：读取和写入当前 LLM 配置
-- `src/lib/ai/`：prompt、模型配置、工具定义
-- `src/lib/game/`：状态结构和规则辅助函数
-- `src/lib/storage/`：持久化适配层
-
-## 当前脚手架说明
-
-- `.gitignore` 已覆盖 Next.js、TypeScript 和日志文件
-- `src/lib/storage/sqlite.ts` 会自动初始化 SQLite 表结构：`chat_sessions`、`chat_messages`、`llm_configs`
-- `src/lib/game/schema.ts` 内置了一个前哨站场景的基础世界状态
-- `src/lib/ai/prompts.ts` 提供了一个绑定当前世界状态的基础系统提示词
-- 首页已经替换为项目落地页，不再使用默认的 Next.js 欢迎页
+- AI能否接收到战斗结果？
+- 战斗划分类型，比武类战斗给所有角色锁血到10%，避免角色死亡。一方血量低于10%则战斗结束，AI根据战斗结果调整NPC状态和后续剧情走向。

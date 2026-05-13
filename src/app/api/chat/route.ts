@@ -15,6 +15,10 @@ import {
 export const runtime = "nodejs";
 export const maxDuration = 30;
 
+type MessageMetadata = Record<string, unknown> & {
+  reasoning_content?: string;
+};
+
 export async function GET(req: Request) {
   const { searchParams } = new URL(req.url);
   const sessionId = searchParams.get("sessionId")?.trim();
@@ -150,12 +154,21 @@ export async function POST(req: Request) {
 
   return result.toUIMessageStreamResponse({
     originalMessages: normalizedMessages,
+    messageMetadata: ({ part }) => {
+      if (part.type !== "finish" || !totalReasoningContent) {
+        return undefined;
+      }
+
+      return {
+        reasoning_content: totalReasoningContent,
+      } satisfies MessageMetadata;
+    },
     onFinish: ({ responseMessage }) => {
       const toSave = totalReasoningContent
         ? {
             ...responseMessage,
             metadata: {
-              ...(responseMessage.metadata as object | undefined),
+              ...(responseMessage.metadata as MessageMetadata | undefined),
               reasoning_content: totalReasoningContent,
             },
           }
