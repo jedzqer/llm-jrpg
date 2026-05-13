@@ -2,9 +2,10 @@ import { mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { UIMessage } from "ai";
+import { normalizeChatMessages } from "@/lib/chat/messages";
 
 const defaultDatabasePath = join(process.cwd(), "data", "app.db");
-const databasePath = resolve(process.env.SQLITE_DATABASE_PATH || defaultDatabasePath);
+const databasePath = resolve(defaultDatabasePath);
 
 mkdirSync(dirname(databasePath), { recursive: true });
 
@@ -91,6 +92,11 @@ const selectMessagesStatement = db.prepare(`
   ORDER BY id ASC
 `);
 
+const deleteSessionMessagesStatement = db.prepare(`
+  DELETE FROM chat_messages
+  WHERE session_id = ?
+`);
+
 const upsertConfigStatement = db.prepare(`
   INSERT INTO llm_configs (id, provider_name, model_id, base_url, api_key)
   VALUES (1, ?, ?, ?, ?)
@@ -118,14 +124,17 @@ export function chatSessionExists(sessionId: string) {
 
 export function loadChatMessages(sessionId: string): UIMessage[] {
   const rows = selectMessagesStatement.all(sessionId) as MessageRow[];
-  return rows.map((row) => JSON.parse(row.message_json) as UIMessage);
+  return normalizeChatMessages(rows.map((row) => JSON.parse(row.message_json) as UIMessage));
 }
 
 export function saveChatMessages(sessionId: string, messages: UIMessage[]) {
+  const normalizedMessages = normalizeChatMessages(messages);
+
   db.exec("BEGIN");
   try {
     ensureSessionStatement.run(sessionId);
-    for (const message of messages) {
+    deleteSessionMessagesStatement.run(sessionId);
+    for (const message of normalizedMessages) {
       insertMessageStatement.run(
         sessionId,
         message.id,
@@ -141,17 +150,8 @@ export function saveChatMessages(sessionId: string, messages: UIMessage[]) {
   }
 }
 
-export function seedLlmConfigFromEnv() {
-  const apiKey = process.env.OPENAI_COMPATIBLE_API_KEY?.trim();
-  const modelId = process.env.OPENAI_MODEL?.trim();
-  const providerName = process.env.OPENAI_PROVIDER_NAME?.trim() || "openai";
-  const baseURL = process.env.OPENAI_BASE_URL?.trim() || undefined;
-
-  if (!apiKey || !modelId) {
-    return;
-  }
-
-  upsertConfigStatement.run(providerName, modelId, baseURL ?? null, apiKey);
+export function replaceChatMessages(sessionId: string, messages: UIMessage[]) {
+  saveChatMessages(sessionId, messages);
 }
 
 export function saveLlmConfig(config: LlmConfig) {
@@ -186,18 +186,16 @@ export function loadLlmConfig(): LlmConfig | null {
 }
 
 export function getResolvedLlmConfig(): LlmConfig {
-  seedLlmConfigFromEnv();
-
   const dbConfig = loadLlmConfig();
-  if (dbConfig?.apiKey && dbConfig.modelId) {
+  if (dbConfig) {
     return dbConfig;
   }
 
   return {
-    apiKey: process.env.OPENAI_COMPATIBLE_API_KEY?.trim(),
-    modelId: process.env.OPENAI_MODEL?.trim() || "gpt-4o-mini",
-    providerName: process.env.OPENAI_PROVIDER_NAME?.trim() || "openai",
-    baseURL: process.env.OPENAI_BASE_URL?.trim() || undefined,
+    apiKey: undefined,
+    modelId: "",
+    providerName: "openai",
+    baseURL: undefined,
   };
 }
 

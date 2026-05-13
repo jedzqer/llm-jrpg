@@ -72,6 +72,13 @@ textarea {
   box-shadow: var(--shadow);
 }
 
+.chat-header-top {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: start;
+}
+
 .chat-header h1 {
   font-size: clamp(1.8rem, 4vw, 2.4rem);
   line-height: 1.1;
@@ -81,6 +88,120 @@ textarea {
   color: var(--muted);
   line-height: 1.7;
   text-wrap: pretty;
+}
+
+.config-panel {
+  display: grid;
+  gap: 14px;
+  padding: 24px 28px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  backdrop-filter: blur(14px);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  transform-origin: top;
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease,
+    max-height 220ms ease,
+    padding 180ms ease,
+    margin 180ms ease,
+    border-color 180ms ease;
+}
+
+.config-panel.collapsed {
+  max-height: 0;
+  opacity: 0;
+  transform: translateY(-8px);
+  padding-top: 0;
+  padding-bottom: 0;
+  margin-top: -8px;
+  margin-bottom: -8px;
+  border-color: transparent;
+  pointer-events: none;
+}
+
+.config-panel.open {
+  max-height: 720px;
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.config-panel-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: end;
+}
+
+.config-panel h2 {
+  font-size: 1.2rem;
+}
+
+.config-meta,
+.config-help,
+.config-status {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.config-meta {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.8rem;
+  word-break: break-all;
+  text-align: right;
+}
+
+.config-form {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.field {
+  display: grid;
+  gap: 8px;
+}
+
+.field span {
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.field input {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 14px;
+  outline: none;
+  transition: border-color 180ms ease;
+}
+
+.field input:focus {
+  border-color: rgba(240, 193, 110, 0.5);
+}
+
+.field-full {
+  grid-column: 1 / -1;
+}
+
+.config-actions {
+  grid-column: 1 / -1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+}
+
+.config-success {
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(120, 185, 135, 0.45);
+  background: rgba(60, 120, 72, 0.18);
+  color: #d8f0dd;
+  font-size: 0.95rem;
 }
 
 .chat-log {
@@ -113,6 +234,13 @@ textarea {
   border: 1px solid var(--line);
 }
 
+.chat-turn-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
 .chat-turn.user {
   background: var(--accent-soft);
   border-color: rgba(240, 193, 110, 0.35);
@@ -131,6 +259,25 @@ textarea {
   font-size: 0.75rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
+}
+
+.message-delete {
+  border: 0;
+  background: transparent;
+  color: var(--muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+  padding: 0;
+  transition: color 180ms ease;
+}
+
+.message-delete:hover:not(:disabled) {
+  color: var(--accent-strong);
+}
+
+.message-delete:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
 }
 
 .chat-body {
@@ -204,6 +351,15 @@ textarea {
   background: linear-gradient(135deg, rgba(211, 168, 95, 0.28), rgba(211, 168, 95, 0.08));
 }
 
+.settings-button {
+  min-width: 88px;
+}
+
+.settings-button.active {
+  border-color: rgba(240, 193, 110, 0.45);
+  background: rgba(240, 193, 110, 0.12);
+}
+
 .button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
@@ -216,10 +372,34 @@ textarea {
   }
 
   .chat-header,
+  .config-panel,
   .chat-log,
   .chat-input {
     padding: 18px;
     border-radius: 18px;
+  }
+
+  .config-panel-heading,
+  .config-actions {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .chat-header-top {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .config-meta {
+    text-align: left;
+  }
+
+  .config-form {
+    grid-template-columns: 1fr;
+  }
+
+  .field-full {
+    grid-column: auto;
   }
 
   .chat-input {

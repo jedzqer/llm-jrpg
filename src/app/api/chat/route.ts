@@ -2,11 +2,13 @@ import { createOpenAI } from "@ai-sdk/openai";
 import { convertToModelMessages, stepCountIs, streamText, type UIMessage } from "ai";
 import { NextResponse } from "next/server";
 import { baseSystemPrompt } from "@/lib/ai/prompts";
+import { normalizeChatMessages } from "@/lib/chat/messages";
 import { gameTools } from "@/lib/ai/tools";
 import {
   ensureChatSession,
   getResolvedLlmConfig,
   loadChatMessages,
+  replaceChatMessages,
   saveChatMessages,
 } from "@/lib/storage/sqlite";
 
@@ -43,12 +45,14 @@ export async function POST(req: Request) {
   }
 
   const { apiKey, modelId, providerName, baseURL } = getResolvedLlmConfig();
-  if (!apiKey) {
+  if (!apiKey || !modelId) {
     return NextResponse.json(
-      { error: "LLM API key is missing. Set env once to seed the SQLite config." },
+      { error: "LLM 尚未配置，请先在页面内填写并保存模型配置。" },
       { status: 500 },
     );
   }
+
+  const normalizedMessages = normalizeChatMessages(messages);
 
   const provider = createOpenAI({
     apiKey,
@@ -57,17 +61,42 @@ export async function POST(req: Request) {
   });
 
   const result = streamText({
-    model: provider(modelId),
+    model: provider.chat(modelId),
     system: baseSystemPrompt,
-    messages: await convertToModelMessages(messages),
+    messages: await convertToModelMessages(normalizedMessages),
     stopWhen: stepCountIs(2),
     tools: gameTools,
+    providerOptions: {
+      [providerName]: {
+        systemMessageMode: "system",
+      },
+    },
   });
 
   return result.toUIMessageStreamResponse({
-    originalMessages: messages,
+    originalMessages: normalizedMessages,
     onFinish: ({ responseMessage }) => {
-      saveChatMessages(sessionId, [...messages, responseMessage]);
+      saveChatMessages(sessionId, [...normalizedMessages, responseMessage]);
     },
   });
+}
+
+export async function DELETE(req: Request) {
+  const {
+    sessionId,
+    messageId,
+  }: {
+    sessionId?: string;
+    messageId?: string;
+  } = await req.json();
+
+  if (!sessionId || !messageId) {
+    return NextResponse.json({ error: "sessionId and messageId are required" }, { status: 400 });
+  }
+
+  const messages = loadChatMessages(sessionId);
+  const nextMessages = normalizeChatMessages(messages.filter((message) => message.id !== messageId));
+  replaceChatMessages(sessionId, nextMessages);
+
+  return NextResponse.json({ ok: true, messages: nextMessages });
 }
