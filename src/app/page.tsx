@@ -1,14 +1,27 @@
 "use client";
 
 import { useChat } from "@ai-sdk/react";
-import { DefaultChatTransport } from "ai";
+import {
+  DefaultChatTransport,
+  InferUITools,
+  lastAssistantMessageIsCompleteWithToolCalls,
+  UIMessage,
+} from "ai";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { CombatPanel } from "@/components/chat/CombatPanel";
+import { starterWorldState } from "@/lib/game/schema";
+import { gameTools } from "@/lib/ai/tools";
+
+type GameUIMessage = UIMessage<never, Record<string, unknown>, InferUITools<typeof gameTools>>;
 
 export default function Home() {
   const [input, setInput] = useState("");
-  const { messages, sendMessage, status, error } = useChat({
-    transport: new DefaultChatTransport({ api: "/api/chat" }),
-  });
+
+  const { messages, sendMessage, status, error, addToolOutput } =
+    useChat<GameUIMessage>({
+      transport: new DefaultChatTransport({ api: "/api/chat" }),
+      sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
+    });
 
   const logRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -51,9 +64,56 @@ export default function Home() {
           <article key={m.id} className={`chat-turn ${m.role}`}>
             <span className="chat-role">{m.role === "user" ? "你" : "叙事"}</span>
             <div className="chat-body">
-              {m.parts.map((part, i) =>
-                part.type === "text" ? <p key={`${m.id}-${i}`}>{part.text}</p> : null,
-              )}
+              {m.parts.map((part, i) => {
+                if (part.type === "text") {
+                  return <p key={`${m.id}-${i}`}>{part.text}</p>;
+                }
+
+                if (part.type === "tool-startCombat") {
+                  if (part.state === "input-streaming") {
+                    return (
+                      <p key={`${m.id}-${i}`} className="combat-loading">
+                        战斗即将开始……
+                      </p>
+                    );
+                  }
+
+                  if (part.state === "input-available") {
+                    const { enemy, triggerDescription } = part.input;
+                    return (
+                      <CombatPanel
+                        key={`${m.id}-${i}`}
+                        player={starterWorldState.player}
+                        enemy={enemy}
+                        triggerDescription={triggerDescription}
+                        onFinish={(outcome, summary) => {
+                          const finalOutcome = (
+                            outcome === "victory" || outcome === "defeat" || outcome === "fled"
+                              ? outcome
+                              : "defeat"
+                          ) as "victory" | "defeat" | "fled";
+                          addToolOutput({
+                            tool: "startCombat",
+                            toolCallId: part.toolCallId,
+                            output: { outcome: finalOutcome, summary },
+                          });
+                        }}
+                      />
+                    );
+                  }
+
+                  if (part.state === "output-available") {
+                    const out = part.output as { summary: string };
+                    return (
+                      <p key={`${m.id}-${i}`} className="combat-done">
+                        ⚔ {out.summary}
+                      </p>
+                    );
+                  }
+                }
+
+                return null;
+              })}
             </div>
           </article>
         ))}

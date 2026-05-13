@@ -1,6 +1,7 @@
 import { openai } from "@ai-sdk/openai";
-import { convertToModelMessages, streamText, type UIMessage } from "ai";
+import { convertToModelMessages, stepCountIs, streamText, type UIMessage } from "ai";
 import { baseSystemPrompt } from "@/lib/ai/prompts";
+import { gameTools } from "@/lib/ai/tools";
 
 export const maxDuration = 30;
 
@@ -13,6 +14,8 @@ export async function POST(req: Request) {
     model: openai(modelId),
     system: baseSystemPrompt,
     messages: await convertToModelMessages(messages),
+    stopWhen: stepCountIs(2),
+    tools: gameTools,
   });
 
   return result.toUIMessageStreamResponse();
