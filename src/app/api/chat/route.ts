@@ -58,10 +58,12 @@ export async function POST(req: Request) {
 
   const normalizedMessages = normalizeChatMessages(messages);
 
-  // reasoning_content values from DB, one per historical assistant message in order
+  // reasoning_content values from prior assistant UI messages, one per message in order.
+  // DeepSeek thinking mode is strict about this field during tool-call continuations:
+  // assistant messages should keep the original value, or an empty string when absent.
   const historicalReasoningContents: string[] = normalizedMessages
     .filter((m) => m.role === "assistant")
-    .map((m) => ((m.metadata as Record<string, unknown> | undefined)?.reasoning_content as string) ?? "");
+    .map((m) => ((m.metadata as MessageMetadata | undefined)?.reasoning_content as string) ?? "");
 
   // reasoning_content captured from the current in-flight step's response
   let stepReasoningContent = "";
@@ -79,17 +81,20 @@ export async function POST(req: Request) {
         };
         if (Array.isArray(body.messages)) {
           // Build the full list of reasoning_content to inject:
-          // historical assistant messages first, then the current step (if any)
-          const rcQueue = [...historicalReasoningContents];
-          if (stepReasoningContent) rcQueue.push(stepReasoningContent);
+          // historical assistant messages first, then the current in-request assistant step.
+          // Even when reasoning is empty, DeepSeek accepts "" and it keeps the
+          // assistant-message alignment stable across tool-call continuations.
+          const rcQueue = [...historicalReasoningContents, stepReasoningContent];
 
           let assistantIdx = 0;
           body.messages = body.messages.map((msg) => {
             // rewrite developer → system
-            const out = msg.role === "developer" ? { ...msg, role: "system" } : { ...msg };
+            const out =
+              msg.role === "developer"
+                ? { ...msg, role: "system" }
+                : { ...msg };
             if (out.role === "assistant") {
-              const rc = rcQueue[assistantIdx] ?? "";
-              if (rc) out.reasoning_content = rc;
+              out.reasoning_content = rcQueue[assistantIdx] ?? "";
               assistantIdx++;
             }
             return out;
@@ -155,7 +160,7 @@ export async function POST(req: Request) {
   return result.toUIMessageStreamResponse({
     originalMessages: normalizedMessages,
     messageMetadata: ({ part }) => {
-      if (part.type !== "finish" || !totalReasoningContent) {
+      if (part.type !== "finish") {
         return undefined;
       }
 
@@ -164,15 +169,13 @@ export async function POST(req: Request) {
       } satisfies MessageMetadata;
     },
     onFinish: ({ responseMessage }) => {
-      const toSave = totalReasoningContent
-        ? {
-            ...responseMessage,
-            metadata: {
-              ...(responseMessage.metadata as MessageMetadata | undefined),
-              reasoning_content: totalReasoningContent,
-            },
-          }
-        : responseMessage;
+      const toSave = {
+        ...responseMessage,
+        metadata: {
+          ...(responseMessage.metadata as MessageMetadata | undefined),
+          reasoning_content: totalReasoningContent,
+        },
+      };
       saveChatMessages(sessionId, [...normalizedMessages, toSave]);
     },
   });
