@@ -9,6 +9,7 @@ import {
 } from "ai";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { CombatPanel } from "@/components/chat/CombatPanel";
+import { getOrCreateSessionId } from "@/lib/chat/session";
 import { starterWorldState } from "@/lib/game/schema";
 import { gameTools } from "@/lib/ai/tools";
 
@@ -16,12 +17,51 @@ type GameUIMessage = UIMessage<never, Record<string, unknown>, InferUITools<type
 
 export default function Home() {
   const [input, setInput] = useState("");
+  const [sessionId] = useState(() => getOrCreateSessionId());
+  const [bootError, setBootError] = useState<string | null>(null);
+  const [historyLoaded, setHistoryLoaded] = useState(false);
 
-  const { messages, sendMessage, status, error, addToolOutput } =
+  const { messages, setMessages, sendMessage, status, error, addToolOutput } =
     useChat<GameUIMessage>({
-      transport: new DefaultChatTransport({ api: "/api/chat" }),
+      id: sessionId || undefined,
+      transport: new DefaultChatTransport({
+        api: "/api/chat",
+        body: sessionId ? { sessionId } : undefined,
+      }),
       sendAutomaticallyWhen: lastAssistantMessageIsCompleteWithToolCalls,
     });
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    let cancelled = false;
+
+    const loadHistory = async () => {
+      try {
+        const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(sessionId)}`);
+        if (!res.ok) {
+          throw new Error("加载历史对话失败");
+        }
+
+        const data = (await res.json()) as { messages?: GameUIMessage[] };
+        if (!cancelled && Array.isArray(data.messages)) {
+          setMessages(data.messages);
+          setHistoryLoaded(true);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setBootError(err instanceof Error ? err.message : "加载历史对话失败");
+          setHistoryLoaded(true);
+        }
+      }
+    };
+
+    void loadHistory();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionId, setMessages]);
 
   const logRef = useRef<HTMLElement>(null);
   useEffect(() => {
@@ -33,7 +73,7 @@ export default function Home() {
   const submit = (e: FormEvent) => {
     e.preventDefault();
     const text = input.trim();
-    if (!text || busy) return;
+    if (!text || busy || !sessionId) return;
     sendMessage({ text });
     setInput("");
   };
@@ -57,6 +97,8 @@ export default function Home() {
       </header>
 
       <section className="chat-log" aria-live="polite" ref={logRef}>
+        {!historyLoaded && <p className="chat-empty">正在回溯此前的因果……</p>}
+        {bootError && <p className="chat-error">会话读取失败：{bootError}</p>}
         {messages.length === 0 && (
           <p className="chat-empty">先开口说点什么，或者做点什么。比如「上前行礼，通报姓名」。</p>
         )}
@@ -127,9 +169,13 @@ export default function Home() {
           onKeyDown={onKeyDown}
           placeholder="述说你的言语或行动……（Enter 发送，Shift+Enter 换行）"
           rows={3}
-          disabled={busy}
+          disabled={busy || !historyLoaded || !sessionId}
         />
-        <button type="submit" className="button primary" disabled={busy || !input.trim()}>
+        <button
+          type="submit"
+          className="button primary"
+          disabled={busy || !input.trim() || !historyLoaded || !sessionId}
+        >
           {busy ? "运转灵力……" : "发送"}
         </button>
       </form>
