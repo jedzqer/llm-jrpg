@@ -221,197 +221,289 @@ export default function Home() {
     }
   };
 
+  const player = starterWorldState.player;
+  const world = starterWorldState;
+
   return (
     <main className="chat-shell">
-      <header className="chat-header">
-        <div className="chat-header-top">
-          <div>
-            <p className="eyebrow">LLM 修仙 · 原型</p>
-            <h1>青云宗 · 外门</h1>
+      <aside className="player-sidebar">
+        <section className="player-panel">
+          <div className="player-panel-head">
+            <div>
+              <p className="eyebrow">修士命盘</p>
+              <h2>{player.name}</h2>
+            </div>
+            <p className="player-realm">{player.realm}</p>
           </div>
-          <button
-            type="button"
-            className={`button settings-button ${settingsOpen ? "active" : ""}`}
-            onClick={() => setSettingsOpen((open) => !open)}
-            aria-expanded={settingsOpen}
-            aria-controls="llm-settings"
-          >
-            设置
-          </button>
-        </div>
-        <p className="lede">
-          演武场试炼初日，雨后青石湿亮。执事林挽玉立于高台，目光掠过你袖中那枚来历不明的青铜铃。
-          说一句话，看看你这一世的修途从何处起步。
-        </p>
-      </header>
 
-      <section
-        id="llm-settings"
-        className={`config-panel ${settingsOpen ? "open" : "collapsed"}`}
-        aria-hidden={!settingsOpen}
-      >
-        <div className="config-panel-heading">
-          <div>
-            <p className="eyebrow">模型配置</p>
-            <h2>在应用内设置 LLM</h2>
+          <div className="player-meta-grid">
+            <div className="player-meta-card">
+              <span className="player-meta-label">门派</span>
+              <strong>{player.sect}</strong>
+            </div>
+            <div className="player-meta-card">
+              <span className="player-meta-label">灵根</span>
+              <strong>{player.spiritRoot}</strong>
+            </div>
           </div>
-          {databasePath && <p className="config-meta">数据库：{databasePath}</p>}
-        </div>
-        <p className="config-help">
-          不再从配置文件读取模型信息。配置会直接保存到应用自己的 SQLite 数据库。
-        </p>
-        {!configLoaded && <p className="chat-empty">正在读取当前模型配置……</p>}
-        {configError && <p className="chat-error">配置错误：{configError}</p>}
-        {configNotice && <p className="config-success">{configNotice}</p>}
-        <form className="config-form" onSubmit={saveConfig}>
-          <label className="field">
-            <span>Provider 名称</span>
-            <input
-              value={providerName}
-              onChange={(e) => setProviderName(e.target.value)}
-              placeholder="openai"
-              disabled={!configLoaded || configSaving}
-            />
-          </label>
-          <label className="field">
-            <span>模型 ID</span>
-            <input
-              value={modelId}
-              onChange={(e) => setModelId(e.target.value)}
-              placeholder="gpt-4o-mini"
-              disabled={!configLoaded || configSaving}
-            />
-          </label>
-          <label className="field field-full">
-            <span>Base URL（可选）</span>
-            <input
-              value={baseURL}
-              onChange={(e) => setBaseURL(e.target.value)}
-              placeholder="https://api.openai.com/v1"
-              disabled={!configLoaded || configSaving}
-            />
-          </label>
-          <label className="field field-full">
-            <span>API Key{hasSavedApiKey ? "（留空表示保留现有值）" : ""}</span>
-            <input
-              type="password"
-              value={apiKey}
-              onChange={(e) => setApiKey(e.target.value)}
-              placeholder={hasSavedApiKey ? "输入新 key 以覆盖" : "输入你的 API Key"}
-              disabled={!configLoaded || configSaving}
-            />
-          </label>
-          <div className="config-actions">
-            <p className="config-status">
-              {hasSavedApiKey ? "当前已保存 API Key。" : "当前尚未保存 API Key。"}
-            </p>
-            <button type="submit" className="button primary" disabled={!configLoaded || configSaving}>
-              {configSaving ? "保存中……" : "保存配置"}
+
+          <div className="player-stat-block">
+            <div className="player-stat-head">
+              <span>气血</span>
+              <strong>
+                {player.hp} / {player.maxHp}
+              </strong>
+            </div>
+            <div className="player-stat-track">
+              <div className="player-stat-fill hp" style={{ width: `${(player.hp / player.maxHp) * 100}%` }} />
+            </div>
+          </div>
+
+          <div className="player-stat-block">
+            <div className="player-stat-head">
+              <span>灵力</span>
+              <strong>
+                {player.qi} / {player.maxQi}
+              </strong>
+            </div>
+            <div className="player-stat-track">
+              <div className="player-stat-fill qi" style={{ width: `${(player.qi / player.maxQi) * 100}%` }} />
+            </div>
+          </div>
+
+          <section className="player-section">
+            <div className="player-section-head">
+              <span className="eyebrow">当前处境</span>
+            </div>
+            <div className="player-scene-card">
+              <p>{world.location}</p>
+              <span>{world.scene}</span>
+            </div>
+          </section>
+
+          <section className="player-section">
+            <div className="player-section-head">
+              <span className="eyebrow">随身物品</span>
+            </div>
+            <ul className="token-list">
+              {player.inventory.map((item) => (
+                <li key={item} className="token-item">
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </section>
+
+          <section className="player-section">
+            <div className="player-section-head">
+              <span className="eyebrow">所习术法</span>
+            </div>
+            <div className="skill-list">
+              {player.skills.map((skill) => (
+                <article key={skill.id} className="skill-card">
+                  <div className="skill-card-head">
+                    <strong>{skill.name}</strong>
+                    <span>{skill.qiCost} 灵力</span>
+                  </div>
+                  <p>{skill.description}</p>
+                </article>
+              ))}
+            </div>
+          </section>
+        </section>
+      </aside>
+
+      <div className="chat-main">
+        <header className="chat-header">
+          <div className="chat-header-top">
+            <div>
+              <p className="eyebrow">LLM 修仙 · 原型</p>
+              <h1>青云宗 · 外门</h1>
+            </div>
+            <button
+              type="button"
+              className={`button settings-button ${settingsOpen ? "active" : ""}`}
+              onClick={() => setSettingsOpen((open) => !open)}
+              aria-expanded={settingsOpen}
+              aria-controls="llm-settings"
+            >
+              设置
             </button>
           </div>
-        </form>
-      </section>
+          <p className="lede">
+            演武场试炼初日，雨后青石湿亮。执事林挽玉立于高台，目光掠过你袖中那枚来历不明的青铜铃。
+            说一句话，看看你这一世的修途从何处起步。
+          </p>
+        </header>
 
-      <section className="chat-log" aria-live="polite" ref={logRef}>
-        {!historyLoaded && <p className="chat-empty">正在回溯此前的因果……</p>}
-        {bootError && <p className="chat-error">会话读取失败：{bootError}</p>}
-        {configLoaded && !hasSavedApiKey && (
-          <p className="chat-empty">先在上方填写并保存模型配置，之后才能开始对话。</p>
-        )}
-        {configLoaded && hasSavedApiKey && !modelId.trim() && (
-          <p className="chat-empty">请先填写模型 ID 并保存，然后再开始对话。</p>
-        )}
-        {messages.length === 0 && (
-          <p className="chat-empty">先开口说点什么，或者做点什么。比如「上前行礼，通报姓名」。</p>
-        )}
-        {messages.map((m) => (
-          <article key={m.id} className={`chat-turn ${m.role}`}>
-            <div className="chat-turn-head">
-              <span className="chat-role">{m.role === "user" ? "你" : "叙事"}</span>
-              <button
-                type="button"
-                className="message-delete"
-                onClick={() => void deleteMessage(m.id)}
-                disabled={busy || deletingMessageId === m.id}
-                aria-label="删除这条消息"
-              >
-                {deletingMessageId === m.id ? "删除中……" : "删除"}
+        <section
+          id="llm-settings"
+          className={`config-panel ${settingsOpen ? "open" : "collapsed"}`}
+          aria-hidden={!settingsOpen}
+        >
+          <div className="config-panel-heading">
+            <div>
+              <p className="eyebrow">模型配置</p>
+              <h2>在应用内设置 LLM</h2>
+            </div>
+            {databasePath && <p className="config-meta">数据库：{databasePath}</p>}
+          </div>
+          <p className="config-help">
+            不再从配置文件读取模型信息。配置会直接保存到应用自己的 SQLite 数据库。
+          </p>
+          {!configLoaded && <p className="chat-empty">正在读取当前模型配置……</p>}
+          {configError && <p className="chat-error">配置错误：{configError}</p>}
+          {configNotice && <p className="config-success">{configNotice}</p>}
+          <form className="config-form" onSubmit={saveConfig}>
+            <label className="field">
+              <span>Provider 名称</span>
+              <input
+                value={providerName}
+                onChange={(e) => setProviderName(e.target.value)}
+                placeholder="openai"
+                disabled={!configLoaded || configSaving}
+              />
+            </label>
+            <label className="field">
+              <span>模型 ID</span>
+              <input
+                value={modelId}
+                onChange={(e) => setModelId(e.target.value)}
+                placeholder="gpt-4o-mini"
+                disabled={!configLoaded || configSaving}
+              />
+            </label>
+            <label className="field field-full">
+              <span>Base URL（可选）</span>
+              <input
+                value={baseURL}
+                onChange={(e) => setBaseURL(e.target.value)}
+                placeholder="https://api.openai.com/v1"
+                disabled={!configLoaded || configSaving}
+              />
+            </label>
+            <label className="field field-full">
+              <span>API Key{hasSavedApiKey ? "（留空表示保留现有值）" : ""}</span>
+              <input
+                type="password"
+                value={apiKey}
+                onChange={(e) => setApiKey(e.target.value)}
+                placeholder={hasSavedApiKey ? "输入新 key 以覆盖" : "输入你的 API Key"}
+                disabled={!configLoaded || configSaving}
+              />
+            </label>
+            <div className="config-actions">
+              <p className="config-status">
+                {hasSavedApiKey ? "当前已保存 API Key。" : "当前尚未保存 API Key。"}
+              </p>
+              <button type="submit" className="button primary" disabled={!configLoaded || configSaving}>
+                {configSaving ? "保存中……" : "保存配置"}
               </button>
             </div>
-            <div className="chat-body">
-              {m.parts.map((part, i) => {
-                if (part.type === "text") {
-                  return <p key={`${m.id}-${i}`}>{part.text}</p>;
-                }
+          </form>
+        </section>
 
-                if (part.type === "tool-startCombat") {
-                  if (part.state === "input-streaming") {
-                    return (
-                      <p key={`${m.id}-${i}`} className="combat-loading">
-                        战斗即将开始……
-                      </p>
-                    );
+        <section className="chat-log" aria-live="polite" ref={logRef}>
+          {!historyLoaded && <p className="chat-empty">正在回溯此前的因果……</p>}
+          {bootError && <p className="chat-error">会话读取失败：{bootError}</p>}
+          {configLoaded && !hasSavedApiKey && (
+            <p className="chat-empty">先在上方填写并保存模型配置，之后才能开始对话。</p>
+          )}
+          {configLoaded && hasSavedApiKey && !modelId.trim() && (
+            <p className="chat-empty">请先填写模型 ID 并保存，然后再开始对话。</p>
+          )}
+          {messages.length === 0 && (
+            <p className="chat-empty">先开口说点什么，或者做点什么。比如「上前行礼，通报姓名」。</p>
+          )}
+          {messages.map((m) => (
+            <article key={m.id} className={`chat-turn ${m.role}`}>
+              <div className="chat-turn-head">
+                <span className="chat-role">{m.role === "user" ? "你" : "叙事"}</span>
+                <button
+                  type="button"
+                  className="message-delete"
+                  onClick={() => void deleteMessage(m.id)}
+                  disabled={busy || deletingMessageId === m.id}
+                  aria-label="删除这条消息"
+                >
+                  {deletingMessageId === m.id ? "删除中……" : "删除"}
+                </button>
+              </div>
+              <div className="chat-body">
+                {m.parts.map((part, i) => {
+                  if (part.type === "text") {
+                    return <p key={`${m.id}-${i}`}>{part.text}</p>;
                   }
 
-                  if (part.state === "input-available") {
-                    const { enemy, triggerDescription } = part.input;
-                    return (
-                      <CombatPanel
-                        key={`${m.id}-${i}`}
-                        player={starterWorldState.player}
-                        enemy={enemy}
-                        triggerDescription={triggerDescription}
-                        onFinish={(outcome, summary) => {
-                          const finalOutcome = (
-                            outcome === "victory" || outcome === "defeat" || outcome === "fled"
-                              ? outcome
-                              : "defeat"
-                          ) as "victory" | "defeat" | "fled";
-                          addToolOutput({
-                            tool: "startCombat",
-                            toolCallId: part.toolCallId,
-                            output: { outcome: finalOutcome, summary },
-                          });
-                        }}
-                      />
-                    );
+                  if (part.type === "tool-startCombat") {
+                    if (part.state === "input-streaming") {
+                      return (
+                        <p key={`${m.id}-${i}`} className="combat-loading">
+                          战斗即将开始……
+                        </p>
+                      );
+                    }
+
+                    if (part.state === "input-available") {
+                      const { enemy, triggerDescription } = part.input;
+                      return (
+                        <CombatPanel
+                          key={`${m.id}-${i}`}
+                          player={starterWorldState.player}
+                          enemy={enemy}
+                          triggerDescription={triggerDescription}
+                          onFinish={(outcome, summary) => {
+                            const finalOutcome = (
+                              outcome === "victory" || outcome === "defeat" || outcome === "fled"
+                                ? outcome
+                                : "defeat"
+                            ) as "victory" | "defeat" | "fled";
+                            addToolOutput({
+                              tool: "startCombat",
+                              toolCallId: part.toolCallId,
+                              output: { outcome: finalOutcome, summary },
+                            });
+                          }}
+                        />
+                      );
+                    }
+
+                    if (part.state === "output-available") {
+                      const out = part.output as { summary: string };
+                      return (
+                        <p key={`${m.id}-${i}`} className="combat-done">
+                          ⚔ {out.summary}
+                        </p>
+                      );
+                    }
                   }
 
-                  if (part.state === "output-available") {
-                    const out = part.output as { summary: string };
-                    return (
-                      <p key={`${m.id}-${i}`} className="combat-done">
-                        ⚔ {out.summary}
-                      </p>
-                    );
-                  }
-                }
+                  return null;
+                })}
+              </div>
+            </article>
+          ))}
+          {error && <p className="chat-error">出了点岔子：{error.message}</p>}
+        </section>
 
-                return null;
-              })}
-            </div>
-          </article>
-        ))}
-        {error && <p className="chat-error">出了点岔子：{error.message}</p>}
-      </section>
-
-      <form className="chat-input" onSubmit={submit}>
-        <textarea
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
-          onKeyDown={onKeyDown}
-          placeholder="述说你的言语或行动……（Enter 发送，Shift+Enter 换行）"
-          rows={3}
-          disabled={busy || !chatReady || !sessionId}
-        />
-        <button
-          type="submit"
-          className="button primary"
-          disabled={busy || !input.trim() || !chatReady || !sessionId}
-        >
-          {busy ? "运转灵力……" : "发送"}
-        </button>
-      </form>
+        <form className="chat-input" onSubmit={submit}>
+          <textarea
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            onKeyDown={onKeyDown}
+            placeholder="述说你的言语或行动……（Enter 发送，Shift+Enter 换行）"
+            rows={3}
+            disabled={busy || !chatReady || !sessionId}
+          />
+          <button
+            type="submit"
+            className="button primary"
+            disabled={busy || !input.trim() || !chatReady || !sessionId}
+          >
+            {busy ? "运转灵力……" : "发送"}
+          </button>
+        </form>
+      </div>
     </main>
   );
 }

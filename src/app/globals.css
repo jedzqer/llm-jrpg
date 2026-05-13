@@ -52,13 +52,192 @@ textarea {
 }
 
 .chat-shell {
-  width: min(820px, calc(100vw - 32px));
+  width: min(1320px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 48px 0 32px;
   display: grid;
-  grid-template-rows: auto 1fr auto;
-  gap: 20px;
+  grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+  gap: 24px;
   min-height: 100vh;
+  align-items: start;
+}
+
+.chat-main {
+  display: grid;
+  grid-template-rows: auto auto 1fr auto;
+  gap: 20px;
+  min-width: 0;
+}
+
+.player-sidebar {
+  position: sticky;
+  top: 24px;
+}
+
+.player-panel {
+  display: grid;
+  gap: 18px;
+  padding: 24px;
+  border: 1px solid var(--line);
+  background:
+    linear-gradient(180deg, rgba(31, 35, 45, 0.92), rgba(16, 18, 24, 0.88)),
+    var(--panel);
+  backdrop-filter: blur(14px);
+  border-radius: 24px;
+  box-shadow: var(--shadow);
+}
+
+.player-panel-head {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid rgba(226, 211, 184, 0.14);
+}
+
+.player-panel-head h2 {
+  font-size: clamp(1.6rem, 3vw, 2rem);
+  line-height: 1.05;
+}
+
+.player-realm {
+  display: inline-flex;
+  width: fit-content;
+  padding: 6px 10px;
+  border: 1px solid rgba(240, 193, 110, 0.24);
+  border-radius: 999px;
+  background: rgba(240, 193, 110, 0.1);
+  color: var(--accent-strong);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.8rem;
+}
+
+.player-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.player-meta-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 211, 184, 0.12);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.player-meta-card strong,
+.player-stat-head strong,
+.skill-card-head strong,
+.player-scene-card p {
+  font-weight: 600;
+}
+
+.player-meta-label {
+  color: var(--muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.player-stat-block {
+  display: grid;
+  gap: 8px;
+}
+
+.player-stat-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.player-stat-track {
+  height: 10px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.player-stat-fill {
+  height: 100%;
+  border-radius: 999px;
+  transition: width 240ms ease;
+}
+
+.player-stat-fill.hp {
+  background: linear-gradient(90deg, #9d3b3b, var(--combat-hp));
+}
+
+.player-stat-fill.qi {
+  background: linear-gradient(90deg, #2f5e83, var(--combat-qi));
+}
+
+.player-section {
+  display: grid;
+  gap: 10px;
+}
+
+.player-section-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.player-scene-card {
+  display: grid;
+  gap: 6px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(240, 193, 110, 0.18);
+  background: rgba(240, 193, 110, 0.06);
+}
+
+.player-scene-card span,
+.skill-card p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.token-list,
+.skill-list {
+  display: grid;
+  gap: 10px;
+}
+
+.token-list {
+  list-style: none;
+}
+
+.token-item {
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(226, 211, 184, 0.1);
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.skill-card {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border-radius: 16px;
+  border: 1px solid rgba(226, 211, 184, 0.1);
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.skill-card-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: baseline;
+}
+
+.skill-card-head span {
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+  font-family: var(--font-geist-mono), monospace;
 }
 
 .chat-header {
@@ -369,9 +548,19 @@ textarea {
   .chat-shell {
     padding: 24px 0;
     gap: 14px;
+    grid-template-columns: 1fr;
+  }
+
+  .chat-main {
+    gap: 14px;
+  }
+
+  .player-sidebar {
+    position: static;
   }
 
   .chat-header,
+  .player-panel,
   .config-panel,
   .chat-log,
   .chat-input {
@@ -395,6 +584,10 @@ textarea {
   }
 
   .config-form {
+    grid-template-columns: 1fr;
+  }
+
+  .player-meta-grid {
     grid-template-columns: 1fr;
   }
 
