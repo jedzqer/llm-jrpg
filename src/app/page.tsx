@@ -41,11 +41,24 @@ async function persistWorldState(sessionId: string, worldState: WorldState) {
 }
 
 type SaveStatusResponse = {
-  hasSave: boolean;
-  updatedAt: string | null;
+  saveSlots: Array<{
+    slotIndex: number;
+    updatedAt: string | null;
+    playerName: string | null;
+    playerRealm: string | null;
+    location: string | null;
+  }>;
 };
 
 export default function Home() {
+  const emptySaveSlots = Array.from({ length: 10 }, (_, index) => ({
+    slotIndex: index + 1,
+    updatedAt: null,
+    playerName: null,
+    playerRealm: null,
+    location: null,
+  }));
+
   const [input, setInput] = useState("");
   const [sessionId] = useState(() => getOrCreateSessionId());
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -57,8 +70,8 @@ export default function Home() {
   const [configSaving, setConfigSaving] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [loadBusy, setLoadBusy] = useState(false);
-  const [hasSave, setHasSave] = useState(false);
-  const [saveUpdatedAt, setSaveUpdatedAt] = useState<string | null>(null);
+  const [activeSlotIndex, setActiveSlotIndex] = useState(1);
+  const [saveSlots, setSaveSlots] = useState<SaveStatusResponse["saveSlots"]>(emptySaveSlots);
   const [configError, setConfigError] = useState<string | null>(null);
   const [configNotice, setConfigNotice] = useState<string | null>(null);
   const [databasePath, setDatabasePath] = useState("");
@@ -165,8 +178,7 @@ export default function Home() {
 
         const data = (await res.json()) as SaveStatusResponse;
         if (!cancelled) {
-          setHasSave(Boolean(data.hasSave));
-          setSaveUpdatedAt(data.updatedAt ?? null);
+          setSaveSlots(Array.isArray(data.saveSlots) ? data.saveSlots : []);
         }
       } catch (err) {
         if (!cancelled) {
@@ -191,6 +203,8 @@ export default function Home() {
 
   const busy = status === "streaming" || status === "submitted";
   const playerDead = worldState.player.hp <= 0;
+  const activeSlot = saveSlots.find((slot) => slot.slotIndex === activeSlotIndex);
+  const activeSlotHasSave = Boolean(activeSlot?.updatedAt);
   const chatReady =
     historyLoaded &&
     worldLoaded &&
@@ -266,7 +280,7 @@ export default function Home() {
     }
   };
 
-  const saveGame = async () => {
+  const saveGame = async (slotIndex: number) => {
     if (!sessionId || busy || saveBusy || loadBusy) return;
 
     setSaveBusy(true);
@@ -278,16 +292,16 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ sessionId }),
+        body: JSON.stringify({ sessionId, slotIndex }),
       });
 
-      const data = (await res.json()) as { error?: string; updatedAt?: string | null };
+      const data = (await res.json()) as SaveStatusResponse & { error?: string };
       if (!res.ok) {
         throw new Error(data.error || "存档失败");
       }
 
-      setHasSave(true);
-      setSaveUpdatedAt(data.updatedAt ?? null);
+      setActiveSlotIndex(slotIndex);
+      setSaveSlots(Array.isArray(data.saveSlots) ? data.saveSlots : []);
     } catch (err) {
       setBootError(err instanceof Error ? err.message : "存档失败");
     } finally {
@@ -295,8 +309,9 @@ export default function Home() {
     }
   };
 
-  const loadGame = async () => {
-    if (!sessionId || busy || saveBusy || loadBusy || !hasSave) return;
+  const loadGame = async (slotIndex: number) => {
+    const slot = saveSlots.find((item) => item.slotIndex === slotIndex);
+    if (!sessionId || busy || saveBusy || loadBusy || !slot?.updatedAt) return;
 
     setLoadBusy(true);
     setBootError(null);
@@ -307,22 +322,23 @@ export default function Home() {
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ sessionId }),
+        body: JSON.stringify({ sessionId, slotIndex }),
       });
 
       const data = (await res.json()) as {
         error?: string;
         messages?: GameUIMessage[];
         worldState?: WorldState;
-        updatedAt?: string | null;
+        saveSlots?: SaveStatusResponse["saveSlots"];
       };
       if (!res.ok || !data.messages || !data.worldState) {
         throw new Error(data.error || "读档失败");
       }
 
+      setActiveSlotIndex(slotIndex);
       setMessages(data.messages);
       setWorldState(data.worldState);
-      setSaveUpdatedAt(data.updatedAt ?? null);
+      setSaveSlots(Array.isArray(data.saveSlots) ? data.saveSlots : []);
     } catch (err) {
       setBootError(err instanceof Error ? err.message : "读档失败");
     } finally {
@@ -486,22 +502,6 @@ export default function Home() {
             <div className="header-actions">
               <button
                 type="button"
-                className="button"
-                onClick={() => void saveGame()}
-                disabled={!sessionId || busy || saveBusy || loadBusy}
-              >
-                {saveBusy ? "存档中……" : "存档"}
-              </button>
-              <button
-                type="button"
-                className="button"
-                onClick={() => void loadGame()}
-                disabled={!sessionId || busy || saveBusy || loadBusy || !hasSave}
-              >
-                {loadBusy ? "读档中……" : "读档"}
-              </button>
-              <button
-                type="button"
                 className={`button settings-button ${settingsOpen ? "active" : ""}`}
                 onClick={() => setSettingsOpen((open) => !open)}
                 aria-expanded={settingsOpen}
@@ -515,11 +515,56 @@ export default function Home() {
             演武场试炼初日，雨后青石湿亮。执事林挽玉立于高台，目光掠过你袖中那枚来历不明的青铜铃。
             说一句话，看看你这一世的修途从何处起步。
           </p>
-          <p className="save-meta">
-            {hasSave
-              ? `当前存档：${saveUpdatedAt ? new Date(saveUpdatedAt).toLocaleString() : "已存在"}`
-              : "当前没有存档。"}
-          </p>
+          <section className="save-panel">
+            <div className="save-panel-head">
+              <p className="eyebrow">存档栏</p>
+              <p className="save-meta">
+                {activeSlotHasSave
+                  ? `当前选中 ${activeSlotIndex} 号档：${activeSlot?.location ?? "未知地点"}`
+                  : `当前选中 ${activeSlotIndex} 号档：空`}
+              </p>
+            </div>
+            <div className="save-slot-grid">
+              {saveSlots.map((slot) => (
+                <article
+                  key={slot.slotIndex}
+                  className={`save-slot-card ${slot.slotIndex === activeSlotIndex ? "active" : ""}`}
+                >
+                  <button
+                    type="button"
+                    className="save-slot-select"
+                    onClick={() => setActiveSlotIndex(slot.slotIndex)}
+                  >
+                    <span className="save-slot-title">{slot.slotIndex} 号档</span>
+                    <strong className="save-slot-name">{slot.playerName ?? "未存档角色"}</strong>
+                    <span className="save-slot-realm">{slot.playerRealm ?? "境界未知"}</span>
+                    <span className="save-slot-location">{slot.location ?? "空档位"}</span>
+                    <span className="save-slot-time">
+                      {slot.updatedAt ? new Date(slot.updatedAt).toLocaleString() : "尚未存档"}
+                    </span>
+                  </button>
+                  <div className="save-slot-actions">
+                    <button
+                      type="button"
+                      className="button"
+                      onClick={() => void saveGame(slot.slotIndex)}
+                      disabled={!sessionId || busy || saveBusy || loadBusy}
+                    >
+                      {saveBusy && activeSlotIndex === slot.slotIndex ? "存档中……" : "存档"}
+                    </button>
+                    <button
+                      type="button"
+                      className="button"
+                      onClick={() => void loadGame(slot.slotIndex)}
+                      disabled={!sessionId || busy || saveBusy || loadBusy || !slot.updatedAt}
+                    >
+                      {loadBusy && activeSlotIndex === slot.slotIndex ? "读档中……" : "读档"}
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </div>
+          </section>
         </header>
 
         <section

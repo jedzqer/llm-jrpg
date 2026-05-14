@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import {
-  loadCheckpoint,
   loadChatMessages,
   loadWorldState,
+  listSaveSlots,
   restoreCheckpoint,
   saveCheckpoint,
 } from "@/lib/storage/sqlite";
@@ -17,40 +17,35 @@ export async function GET(req: Request) {
     return NextResponse.json({ error: "sessionId is required" }, { status: 400 });
   }
 
-  const checkpoint = loadCheckpoint(sessionId);
-
   return NextResponse.json({
     sessionId,
-    hasSave: Boolean(checkpoint),
-    updatedAt: checkpoint?.updatedAt ?? null,
+    saveSlots: listSaveSlots(sessionId),
   });
 }
 
 export async function POST(req: Request) {
-  const { sessionId }: { sessionId?: string } = await req.json();
+  const { sessionId, slotIndex }: { sessionId?: string; slotIndex?: number } = await req.json();
 
-  if (!sessionId) {
-    return NextResponse.json({ error: "sessionId is required" }, { status: 400 });
+  if (!sessionId || typeof slotIndex !== "number") {
+    return NextResponse.json({ error: "sessionId and slotIndex are required" }, { status: 400 });
   }
 
-  saveCheckpoint(sessionId, loadChatMessages(sessionId), loadWorldState(sessionId));
-  const checkpoint = loadCheckpoint(sessionId);
+  saveCheckpoint(sessionId, slotIndex, loadChatMessages(sessionId), loadWorldState(sessionId));
 
   return NextResponse.json({
     ok: true,
-    hasSave: true,
-    updatedAt: checkpoint?.updatedAt ?? null,
+    saveSlots: listSaveSlots(sessionId),
   });
 }
 
 export async function PUT(req: Request) {
-  const { sessionId }: { sessionId?: string } = await req.json();
+  const { sessionId, slotIndex }: { sessionId?: string; slotIndex?: number } = await req.json();
 
-  if (!sessionId) {
-    return NextResponse.json({ error: "sessionId is required" }, { status: 400 });
+  if (!sessionId || typeof slotIndex !== "number") {
+    return NextResponse.json({ error: "sessionId and slotIndex are required" }, { status: 400 });
   }
 
-  const checkpoint = restoreCheckpoint(sessionId);
+  const checkpoint = restoreCheckpoint(sessionId, slotIndex);
   if (!checkpoint) {
     return NextResponse.json({ error: "当前没有可读取的存档" }, { status: 404 });
   }
@@ -59,6 +54,6 @@ export async function PUT(req: Request) {
     ok: true,
     messages: checkpoint.messages,
     worldState: checkpoint.worldState,
-    updatedAt: checkpoint.updatedAt,
+    saveSlots: listSaveSlots(sessionId),
   });
 }

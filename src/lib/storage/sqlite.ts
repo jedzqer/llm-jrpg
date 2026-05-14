@@ -7,6 +7,7 @@ import { starterWorldState, type WorldState } from "@/lib/game/schema";
 
 const defaultDatabasePath = join(process.cwd(), "data", "app.db");
 const databasePath = resolve(defaultDatabasePath);
+export const SAVE_SLOT_COUNT = 10;
 
 mkdirSync(dirname(databasePath), { recursive: true });
 
@@ -56,11 +57,13 @@ db.exec(`
   );
 
   CREATE TABLE IF NOT EXISTS save_slots (
-    session_id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    slot_index INTEGER NOT NULL,
     messages_json TEXT NOT NULL,
     world_state_json TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (session_id, slot_index),
     FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
   );
 `);
@@ -78,6 +81,7 @@ type WorldStateRow = {
 };
 
 type SaveSlotRow = {
+  slot_index: number;
   messages_json: string;
   world_state_json: string;
   updated_at: string;
@@ -138,18 +142,25 @@ const selectWorldStateStatement = db.prepare(`
 `);
 
 const upsertSaveSlotStatement = db.prepare(`
-  INSERT INTO save_slots (session_id, messages_json, world_state_json)
-  VALUES (?, ?, ?)
-  ON CONFLICT(session_id) DO UPDATE SET
+  INSERT INTO save_slots (session_id, slot_index, messages_json, world_state_json)
+  VALUES (?, ?, ?, ?)
+  ON CONFLICT(session_id, slot_index) DO UPDATE SET
     messages_json = excluded.messages_json,
     world_state_json = excluded.world_state_json,
     updated_at = CURRENT_TIMESTAMP
 `);
 
-const selectSaveSlotStatement = db.prepare(`
-  SELECT messages_json, world_state_json, updated_at
+const selectSaveSlotsStatement = db.prepare(`
+  SELECT slot_index, messages_json, world_state_json, updated_at
   FROM save_slots
   WHERE session_id = ?
+  ORDER BY slot_index ASC
+`);
+
+const selectSaveSlotStatement = db.prepare(`
+  SELECT slot_index, messages_json, world_state_json, updated_at
+  FROM save_slots
+  WHERE session_id = ? AND slot_index = ?
 `);
 
 const deleteSessionMessagesStatement = db.prepare(`
@@ -173,6 +184,62 @@ const selectConfigStatement = db.prepare(`
   FROM llm_configs
   WHERE id = 1
 `);
+
+const saveSlotsTableInfoStatement = db.prepare(`
+  PRAGMA table_info(save_slots)
+`);
+
+function migrateSaveSlotsTableIfNeeded() {
+  const columns = saveSlotsTableInfoStatement.all() as Array<{ name: string }>;
+  const hasSlotIndex = columns.some((column) => column.name === "slot_index");
+
+  if (hasSlotIndex) {
+    return;
+  }
+
+  db.exec("BEGIN");
+  try {
+    db.exec(`
+      ALTER TABLE save_slots RENAME TO save_slots_legacy;
+
+      CREATE TABLE save_slots (
+        session_id TEXT NOT NULL,
+        slot_index INTEGER NOT NULL,
+        messages_json TEXT NOT NULL,
+        world_state_json TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (session_id, slot_index),
+        FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+      );
+
+      INSERT INTO save_slots (
+        session_id,
+        slot_index,
+        messages_json,
+        world_state_json,
+        created_at,
+        updated_at
+      )
+      SELECT
+        session_id,
+        1,
+        messages_json,
+        world_state_json,
+        created_at,
+        updated_at
+      FROM save_slots_legacy;
+
+      DROP TABLE save_slots_legacy;
+    `);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+migrateSaveSlotsTableIfNeeded();
 
 export function ensureChatSession(sessionId: string) {
   const exists = chatSessionExists(sessionId);
@@ -233,7 +300,80 @@ export function replaceChatMessages(sessionId: string, messages: UIMessage[]) {
   saveChatMessages(sessionId, messages);
 }
 
-export function saveCheckpoint(sessionId: string, messages: UIMessage[], worldState: WorldState) {
+type SaveSlotSummary = {
+  slotIndex: number;
+  updatedAt: string | null;
+  playerName: string | null;
+  playerRealm: string | null;
+  playerSect: string | null;
+  location: string | null;
+  hp: number | null;
+  maxHp: number | null;
+  qi: number | null;
+  maxQi: number | null;
+};
+
+type CheckpointData = {
+  messages: UIMessage[];
+  worldState: WorldState;
+  updatedAt: string;
+};
+
+function buildSaveSlotSummary(slotIndex: number, row?: SaveSlotRow): SaveSlotSummary {
+  if (!row) {
+    return {
+      slotIndex,
+      updatedAt: null,
+      playerName: null,
+      playerRealm: null,
+      playerSect: null,
+      location: null,
+      hp: null,
+      maxHp: null,
+      qi: null,
+      maxQi: null,
+    };
+  }
+
+  const worldState = JSON.parse(row.world_state_json) as WorldState;
+
+  return {
+    slotIndex,
+    updatedAt: row.updated_at,
+    playerName: worldState.player.name,
+    playerRealm: worldState.player.realm,
+    playerSect: worldState.player.sect,
+    location: worldState.location,
+    hp: worldState.player.hp,
+    maxHp: worldState.player.maxHp,
+    qi: worldState.player.qi,
+    maxQi: worldState.player.maxQi,
+  };
+}
+
+function assertSaveSlotIndex(slotIndex: number) {
+  if (!Number.isInteger(slotIndex) || slotIndex < 1 || slotIndex > SAVE_SLOT_COUNT) {
+    throw new Error(`slotIndex must be between 1 and ${SAVE_SLOT_COUNT}`);
+  }
+}
+
+export function listSaveSlots(sessionId: string): SaveSlotSummary[] {
+  ensureChatSession(sessionId);
+  const rows = selectSaveSlotsStatement.all(sessionId) as SaveSlotRow[];
+  const rowsBySlot = new Map(rows.map((row) => [row.slot_index, row]));
+
+  return Array.from({ length: SAVE_SLOT_COUNT }, (_, index) =>
+    buildSaveSlotSummary(index + 1, rowsBySlot.get(index + 1)),
+  );
+}
+
+export function saveCheckpoint(
+  sessionId: string,
+  slotIndex: number,
+  messages: UIMessage[],
+  worldState: WorldState,
+) {
+  assertSaveSlotIndex(slotIndex);
   const normalizedMessages = normalizeChatMessages(messages);
 
   db.exec("BEGIN");
@@ -241,6 +381,7 @@ export function saveCheckpoint(sessionId: string, messages: UIMessage[], worldSt
     ensureSessionStatement.run(sessionId);
     upsertSaveSlotStatement.run(
       sessionId,
+      slotIndex,
       JSON.stringify(normalizedMessages),
       JSON.stringify(worldState),
     );
@@ -252,11 +393,10 @@ export function saveCheckpoint(sessionId: string, messages: UIMessage[], worldSt
   }
 }
 
-export function loadCheckpoint(sessionId: string):
-  | { messages: UIMessage[]; worldState: WorldState; updatedAt: string }
-  | null {
+export function loadCheckpoint(sessionId: string, slotIndex: number): CheckpointData | null {
+  assertSaveSlotIndex(slotIndex);
   ensureChatSession(sessionId);
-  const row = selectSaveSlotStatement.get(sessionId) as SaveSlotRow | undefined;
+  const row = selectSaveSlotStatement.get(sessionId, slotIndex) as SaveSlotRow | undefined;
   if (!row) {
     return null;
   }
@@ -268,8 +408,8 @@ export function loadCheckpoint(sessionId: string):
   };
 }
 
-export function restoreCheckpoint(sessionId: string) {
-  const checkpoint = loadCheckpoint(sessionId);
+export function restoreCheckpoint(sessionId: string, slotIndex: number) {
+  const checkpoint = loadCheckpoint(sessionId, slotIndex);
   if (!checkpoint) {
     return null;
   }
