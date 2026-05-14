@@ -9,6 +9,7 @@ import {
 } from "ai";
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { CombatPanel } from "@/components/chat/CombatPanel";
+import { RichText } from "@/components/chat/RichText";
 import { normalizeChatMessages } from "@/lib/chat/messages";
 import { getOrCreateSessionId } from "@/lib/chat/session";
 import { gameTools } from "@/lib/ai/tools";
@@ -525,7 +526,11 @@ export default function Home() {
               <div className="chat-body">
                 {m.parts.map((part, i) => {
                   if (part.type === "text") {
-                    return <p key={`${m.id}-${i}`}>{part.text}</p>;
+                    return (
+                      <p key={`${m.id}-${i}`}>
+                        <RichText text={part.text} />
+                      </p>
+                    );
                   }
 
                   if (part.type === "tool-startCombat") {

@@ -466,6 +466,15 @@ textarea {
   text-wrap: pretty;
 }
 
+.chat-body strong {
+  font-weight: 700;
+  color: #fff5df;
+}
+
+.chat-inline-quote {
+  color: #f0b35b;
+}
+
 .chat-error {
   padding: 12px 16px;
   border-radius: 12px;
