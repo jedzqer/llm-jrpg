@@ -220,7 +220,7 @@ const baseStarterWorldState: WorldState = {
     maxHp: CHARACTER_CREATION_MIN_HP,
     qi: CHARACTER_CREATION_MIN_QI,
     maxQi: CHARACTER_CREATION_MIN_QI,
-    inventory: [],
+    inventory: starterInventory,
     skills: playerSkills,
   },
   activeNpc: {

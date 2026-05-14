@@ -131,7 +131,7 @@ export default function Home() {
   const [activeSlotIndex, setActiveSlotIndex] = useState(1);
   const [saveSlots, setSaveSlots] = useState<SaveStatusResponse["saveSlots"]>(emptySaveSlots);
   const [globalSaveSlots, setGlobalSaveSlots] = useState<SaveStatusResponse["saveSlots"]>([]);
-  const [pendingInit, setPendingInit] = useState(false);
+  const pendingInitRef = useRef(false);
   const appliedWorldToolCallsRef = useRef(new Set<string>());
   const appliedGiveItemCallsRef = useRef(new Set<string>());
 
@@ -211,10 +211,10 @@ export default function Home() {
 
   // Auto-send init message after new game creation
   useEffect(() => {
-    if (!pendingInit || !historyLoaded || !worldLoaded || !sessionId) return;
-    setPendingInit(false);
+    if (!pendingInitRef.current || !historyLoaded || !worldLoaded || !sessionId) return;
+    pendingInitRef.current = false;
     sendMessage({ text: "[系统] 角色初始化" });
-  }, [pendingInit, historyLoaded, worldLoaded, sessionId, sendMessage]);
+  }, [historyLoaded, worldLoaded, sessionId, sendMessage]);
 
   // PLACEHOLDER_EFFECTS
 
@@ -471,7 +471,7 @@ export default function Home() {
     setHistoryLoaded(true);
     setWorldLoaded(true);
     setMenuOpen(false);
-    setPendingInit(true);
+    pendingInitRef.current = true;
   };
 
   const handleLoadSave = async (targetSessionId: string, slotIndex: number) => {
