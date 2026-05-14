@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import {
+  listAllSaveSlots,
   loadChatMessages,
   loadWorldState,
   listSaveSlots,
@@ -14,7 +15,9 @@ export async function GET(req: Request) {
   const sessionId = searchParams.get("sessionId")?.trim();
 
   if (!sessionId) {
-    return NextResponse.json({ error: "sessionId is required" }, { status: 400 });
+    return NextResponse.json({
+      saveSlots: listAllSaveSlots(),
+    });
   }
 
   return NextResponse.json({

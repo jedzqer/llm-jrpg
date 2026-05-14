@@ -92,6 +92,10 @@ type SaveSlotRow = {
   updated_at: string;
 };
 
+type GlobalSaveSlotRow = SaveSlotRow & {
+  session_id: string;
+};
+
 type LlmConfig = {
   providerName: string;
   modelId: string;
@@ -160,6 +164,12 @@ const selectSaveSlotsStatement = db.prepare(`
   FROM save_slots
   WHERE session_id = ?
   ORDER BY slot_index ASC
+`);
+
+const selectAllSaveSlotsStatement = db.prepare(`
+  SELECT session_id, slot_index, messages_json, world_state_json, updated_at
+  FROM save_slots
+  ORDER BY updated_at DESC, slot_index ASC
 `);
 
 const selectSaveSlotStatement = db.prepare(`
@@ -306,6 +316,7 @@ export function replaceChatMessages(sessionId: string, messages: UIMessage[]) {
 }
 
 type SaveSlotSummary = {
+  sessionId: string | null;
   slotIndex: number;
   updatedAt: string | null;
   playerName: string | null;
@@ -328,6 +339,7 @@ type CheckpointData = {
 function buildSaveSlotSummary(slotIndex: number, row?: SaveSlotRow): SaveSlotSummary {
   if (!row) {
     return {
+      sessionId: null,
       slotIndex,
       updatedAt: null,
       playerName: null,
@@ -345,6 +357,7 @@ function buildSaveSlotSummary(slotIndex: number, row?: SaveSlotRow): SaveSlotSum
   const worldState = normalizeWorldState(JSON.parse(row.world_state_json) as WorldState);
 
   return {
+    sessionId: null,
     slotIndex,
     updatedAt: row.updated_at,
     playerName: worldState.player.name,
@@ -370,9 +383,26 @@ export function listSaveSlots(sessionId: string): SaveSlotSummary[] {
   const rows = selectSaveSlotsStatement.all(sessionId) as SaveSlotRow[];
   const rowsBySlot = new Map(rows.map((row) => [row.slot_index, row]));
 
-  return Array.from({ length: SAVE_SLOT_COUNT }, (_, index) =>
-    buildSaveSlotSummary(index + 1, rowsBySlot.get(index + 1)),
-  );
+  return Array.from({ length: SAVE_SLOT_COUNT }, (_, index) => {
+    const slotIndex = index + 1;
+    const summary = buildSaveSlotSummary(slotIndex, rowsBySlot.get(slotIndex));
+    return {
+      ...summary,
+      sessionId: summary.updatedAt ? sessionId : null,
+    };
+  });
+}
+
+export function listAllSaveSlots(): SaveSlotSummary[] {
+  const rows = selectAllSaveSlotsStatement.all() as GlobalSaveSlotRow[];
+
+  return rows.map((row) => {
+    const summary = buildSaveSlotSummary(row.slot_index, row);
+    return {
+      ...summary,
+      sessionId: row.session_id,
+    };
+  });
 }
 
 export function saveCheckpoint(

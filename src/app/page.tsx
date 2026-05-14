@@ -10,7 +10,11 @@ import {
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { CombatPanel } from "@/components/chat/CombatPanel";
 import { RichText } from "@/components/chat/RichText";
-import { getOrCreateSessionId } from "@/lib/chat/session";
+import {
+  createSessionId,
+  getOrCreateSessionId,
+  setStoredSessionId,
+} from "@/lib/chat/session";
 import { gameTools, type WorldStateChangeInput } from "@/lib/ai/tools";
 import { formatWorldTime, normalizeWorldState, starterWorldState, type WorldState } from "@/lib/game/schema";
 
@@ -108,6 +112,7 @@ function getMessageStatusSnapshot(message: GameUIMessage, fallback: WorldState) 
 
 type SaveStatusResponse = {
   saveSlots: Array<{
+    sessionId?: string | null;
     slotIndex: number;
     updatedAt: string | null;
     playerName: string | null;
@@ -119,6 +124,7 @@ type SaveStatusResponse = {
 
 export default function Home() {
   const emptySaveSlots = Array.from({ length: 10 }, (_, index) => ({
+    sessionId: null,
     slotIndex: index + 1,
     updatedAt: null,
     playerName: null,
@@ -128,8 +134,10 @@ export default function Home() {
   }));
 
   const [input, setInput] = useState("");
-  const [sessionId] = useState(() => getOrCreateSessionId());
+  const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(true);
+  const [menuMode, setMenuMode] = useState<"root" | "load">("root");
   const [bootError, setBootError] = useState<string | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [worldLoaded, setWorldLoaded] = useState(false);
@@ -138,8 +146,10 @@ export default function Home() {
   const [configSaving, setConfigSaving] = useState(false);
   const [saveBusy, setSaveBusy] = useState(false);
   const [loadBusy, setLoadBusy] = useState(false);
+  const [menuBusy, setMenuBusy] = useState(false);
   const [activeSlotIndex, setActiveSlotIndex] = useState(1);
   const [saveSlots, setSaveSlots] = useState<SaveStatusResponse["saveSlots"]>(emptySaveSlots);
+  const [globalSaveSlots, setGlobalSaveSlots] = useState<SaveStatusResponse["saveSlots"]>([]);
   const [configError, setConfigError] = useState<string | null>(null);
   const [configNotice, setConfigNotice] = useState<string | null>(null);
   const [databasePath, setDatabasePath] = useState("");
@@ -187,6 +197,33 @@ export default function Home() {
     };
 
     void loadConfig();
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadGlobalSaveStatus = async () => {
+      try {
+        const res = await fetch("/api/save");
+        if (!res.ok) {
+          throw new Error("读取全局存档失败");
+        }
+
+        const data = (await res.json()) as SaveStatusResponse;
+        if (cancelled) return;
+
+        setGlobalSaveSlots(Array.isArray(data.saveSlots) ? data.saveSlots : []);
+      } catch (err) {
+        if (cancelled) return;
+        setBootError(err instanceof Error ? err.message : "读取全局存档失败");
+      }
+    };
+
+    void loadGlobalSaveStatus();
 
     return () => {
       cancelled = true;
@@ -344,6 +381,16 @@ export default function Home() {
     setInput("");
   };
 
+  const refreshGlobalSaves = async () => {
+    const res = await fetch("/api/save");
+    if (!res.ok) {
+      throw new Error("读取全局存档失败");
+    }
+
+    const data = (await res.json()) as SaveStatusResponse;
+    setGlobalSaveSlots(Array.isArray(data.saveSlots) ? data.saveSlots : []);
+  };
+
   const saveConfig = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     setConfigError(null);
@@ -425,6 +472,7 @@ export default function Home() {
 
       setActiveSlotIndex(slotIndex);
       setSaveSlots(Array.isArray(data.saveSlots) ? data.saveSlots : []);
+      await refreshGlobalSaves();
     } catch (err) {
       setBootError(err instanceof Error ? err.message : "存档失败");
     } finally {
@@ -462,6 +510,7 @@ export default function Home() {
       setMessages(data.messages);
       setWorldState(normalizeWorldState(data.worldState));
       setSaveSlots(Array.isArray(data.saveSlots) ? data.saveSlots : []);
+      await refreshGlobalSaves();
     } catch (err) {
       setBootError(err instanceof Error ? err.message : "读档失败");
     } finally {
@@ -525,9 +574,144 @@ export default function Home() {
 
   const player = worldState.player;
   const world = worldState;
+  const hasActiveProgress = messages.length > 0 || saveSlots.some((slot) => Boolean(slot.updatedAt));
+  const visibleGlobalSaves = globalSaveSlots.filter((slot) => slot.updatedAt && slot.sessionId);
+
+  const startNewGame = () => {
+    const nextSessionId = createSessionId();
+    if (!nextSessionId) return;
+
+    setStoredSessionId(nextSessionId);
+    appliedWorldToolCallsRef.current.clear();
+    setSessionId(nextSessionId);
+    setMessages([]);
+    setWorldState(starterWorldState);
+    setInput("");
+    setActiveSlotIndex(1);
+    setSaveSlots(emptySaveSlots);
+    setBootError(null);
+    setMenuMode("root");
+    setMenuOpen(false);
+  };
+
+  const loadMenuSave = async (targetSessionId: string, slotIndex: number) => {
+    if (menuBusy) return;
+
+    setMenuBusy(true);
+    setBootError(null);
+
+    try {
+      const res = await fetch("/api/save", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ sessionId: targetSessionId, slotIndex }),
+      });
+
+      const data = (await res.json()) as {
+        error?: string;
+        messages?: GameUIMessage[];
+        worldState?: WorldState;
+        saveSlots?: SaveStatusResponse["saveSlots"];
+      };
+      if (!res.ok || !data.messages || !data.worldState) {
+        throw new Error(data.error || "读档失败");
+      }
+
+      setStoredSessionId(targetSessionId);
+      appliedWorldToolCallsRef.current.clear();
+      setSessionId(targetSessionId);
+      setMessages(data.messages);
+      setWorldState(normalizeWorldState(data.worldState));
+      setSaveSlots(Array.isArray(data.saveSlots) ? data.saveSlots : []);
+      setInput("");
+      setActiveSlotIndex(slotIndex);
+      setMenuMode("root");
+      setMenuOpen(false);
+      await refreshGlobalSaves();
+    } catch (err) {
+      setBootError(err instanceof Error ? err.message : "读档失败");
+    } finally {
+      setMenuBusy(false);
+    }
+  };
 
   return (
     <main className="chat-shell">
+      {menuOpen && (
+        <section className="main-menu-overlay" aria-label="主菜单">
+          <div className="main-menu-panel">
+            <p className="eyebrow">LLM 修仙 · 主菜单</p>
+            <h2>青云宗山门</h2>
+            <p className="main-menu-lede">
+              {menuMode === "root"
+                ? "选择一条路。可以自此开新局，也可以从旧日存档续上因果。"
+                : "从已有存档中择一卷入局。读取后会回到该会话对应的时间点。"}
+            </p>
+
+            {menuMode === "root" ? (
+              <div className="main-menu-actions">
+                <button type="button" className="button primary main-menu-button" onClick={startNewGame}>
+                  新建游戏
+                </button>
+                <button
+                  type="button"
+                  className="button main-menu-button"
+                  onClick={() => setMenuMode("load")}
+                  disabled={visibleGlobalSaves.length === 0}
+                >
+                  读取存档
+                </button>
+                {hasActiveProgress && (
+                  <button type="button" className="button main-menu-button" onClick={() => setMenuOpen(false)}>
+                    返回游戏
+                  </button>
+                )}
+              </div>
+            ) : (
+              <div className="main-menu-load-section">
+                <div className="main-menu-load-head">
+                  <p className="save-meta">
+                    {visibleGlobalSaves.length > 0
+                      ? `共发现 ${visibleGlobalSaves.length} 个可读取存档`
+                      : "当前还没有可读取存档"}
+                  </p>
+                  <button type="button" className="button" onClick={() => setMenuMode("root")} disabled={menuBusy}>
+                    返回
+                  </button>
+                </div>
+                <div className="main-menu-save-list">
+                  {visibleGlobalSaves.map((slot) => (
+                    <article key={`${slot.sessionId}-${slot.slotIndex}-${slot.updatedAt}`} className="main-menu-save-card">
+                      <div className="main-menu-save-copy">
+                        <span className="save-slot-title">
+                          {slot.slotIndex} 号档 · 会话 {slot.sessionId?.slice(0, 8)}
+                        </span>
+                        <strong className="save-slot-name">{slot.playerName ?? "未命名角色"}</strong>
+                        <span className="save-slot-realm">{slot.playerRealm ?? "境界未知"}</span>
+                        <span className="save-slot-location">{slot.location ?? "未知地点"}</span>
+                        <span className="save-slot-time">{slot.timeLabel ?? "时序未定"}</span>
+                        <span className="save-slot-time">
+                          {slot.updatedAt ? new Date(slot.updatedAt).toLocaleString() : "尚未存档"}
+                        </span>
+                      </div>
+                      <button
+                        type="button"
+                        className="button primary"
+                        onClick={() => void loadMenuSave(slot.sessionId!, slot.slotIndex)}
+                        disabled={menuBusy}
+                      >
+                        {menuBusy ? "读取中……" : "读取此档"}
+                      </button>
+                    </article>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        </section>
+      )}
       <aside className="player-sidebar">
         <section className="player-panel">
           <div className="player-panel-head">
@@ -624,6 +808,16 @@ export default function Home() {
               <h1>青云宗 · 外门</h1>
             </div>
             <div className="header-actions">
+              <button
+                type="button"
+                className="button"
+                onClick={() => {
+                  setMenuMode("root");
+                  setMenuOpen(true);
+                }}
+              >
+                主菜单
+              </button>
               <button
                 type="button"
                 className={`button settings-button ${settingsOpen ? "active" : ""}`}
