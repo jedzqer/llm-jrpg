@@ -2,14 +2,19 @@
 
 import { useState } from "react";
 import { createCombatState, outcomeSummary, stepCombat } from "@/lib/game/combat";
-import type { CombatState } from "@/lib/game/schema";
-import type { NpcState, PlayerState } from "@/lib/game/schema";
+import type { CombatOutcome, CombatState, CombatType, NpcState, PlayerState } from "@/lib/game/schema";
 
 type Props = {
   player: PlayerState;
   enemy: NpcState;
+  combatType: CombatType;
   triggerDescription: string;
-  onFinish: (outcome: string, summary: string) => void;
+  onFinish: (result: {
+    outcome: CombatOutcome;
+    summary: string;
+    player: Pick<PlayerState, "hp" | "maxHp" | "qi" | "maxQi">;
+    enemy: Pick<NpcState, "id" | "hp" | "maxHp" | "qi" | "maxQi">;
+  }) => void;
 };
 
 function Bar({ value, max, color }: { value: number; max: number; color: string }) {
@@ -60,9 +65,9 @@ function ParticipantCard({
   );
 }
 
-export function CombatPanel({ player, enemy, triggerDescription, onFinish }: Props) {
+export function CombatPanel({ player, enemy, combatType, triggerDescription, onFinish }: Props) {
   const [combat, setCombat] = useState<CombatState>(() =>
-    createCombatState(player, enemy),
+    createCombatState(player, enemy, combatType),
   );
   const [finished, setFinished] = useState(false);
 
@@ -80,7 +85,23 @@ export function CombatPanel({ player, enemy, triggerDescription, onFinish }: Pro
 
   const handleConfirm = () => {
     const summary = outcomeSummary(combat);
-    onFinish(combat.outcome, summary);
+    onFinish({
+      outcome: combat.outcome,
+      summary,
+      player: {
+        hp: combat.player.hp,
+        maxHp: combat.player.maxHp,
+        qi: combat.player.qi,
+        maxQi: combat.player.maxQi,
+      },
+      enemy: {
+        id: combat.enemy.id,
+        hp: combat.enemy.hp,
+        maxHp: combat.enemy.maxHp,
+        qi: combat.enemy.qi,
+        maxQi: combat.enemy.maxQi,
+      },
+    });
   };
 
   const latestLogs = combat.log.slice(-6);

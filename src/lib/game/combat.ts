@@ -3,6 +3,7 @@ import type {
   CombatOutcome,
   CombatParticipant,
   CombatState,
+  CombatType,
   NpcState,
   PlayerState,
   Skill,
@@ -11,6 +12,19 @@ import type {
 export type CombatAction =
   | { kind: "skill"; skillId: string }
   | { kind: "flee" };
+
+const SPAR_HP_FLOOR_RATIO = 0.1;
+
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+
+function getSparFloor(maxHp: number) {
+  return Math.max(1, Math.ceil(maxHp * SPAR_HP_FLOOR_RATIO));
+}
+
+function clampHpForCombatType(hp: number, maxHp: number, combatType: CombatType) {
+  if (combatType !== "spar") return clamp(hp, 0, maxHp);
+  return clamp(hp, getSparFloor(maxHp), maxHp);
+}
 
 export function toParticipant(
   source: PlayerState | NpcState,
@@ -30,29 +44,36 @@ export function toParticipant(
   };
 }
 
-export function createCombatState(player: PlayerState, enemy: NpcState): CombatState {
+export function createCombatState(
+  player: PlayerState,
+  enemy: NpcState,
+  combatType: CombatType,
+): CombatState {
   return {
     round: 1,
+    type: combatType,
     player: toParticipant(player, "player"),
     enemy: toParticipant(enemy, enemy.id || "enemy"),
     log: [
       {
         round: 1,
         actor: "system",
-        text: `战起：${player.name}（${player.realm}）对阵 ${enemy.name}（${enemy.realm}）。`,
+        text:
+          combatType === "spar"
+            ? `比试开始：${player.name}（${player.realm}）对阵 ${enemy.name}（${enemy.realm}），点到为止。`
+            : `战起：${player.name}（${player.realm}）对阵 ${enemy.name}（${enemy.realm}）。`,
       },
     ],
     outcome: "ongoing",
   };
 }
 
-const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
-
 function applySkill(
   actor: CombatParticipant,
   target: CombatParticipant,
   skill: Skill,
   jitter: number,
+  combatType: CombatType,
 ): { actor: CombatParticipant; target: CombatParticipant; text: string } {
   if (actor.qi < skill.qiCost) {
     return {
@@ -84,7 +105,10 @@ function applySkill(
   }
 
   const dmg = Math.max(1, skill.power + jitter);
-  const updatedTarget = { ...target, hp: clamp(target.hp - dmg, 0, target.maxHp) };
+  const updatedTarget = {
+    ...target,
+    hp: clampHpForCombatType(target.hp - dmg, target.maxHp, combatType),
+  };
   return {
     actor: nextActor,
     target: updatedTarget,
@@ -99,6 +123,12 @@ function pickEnemySkill(enemy: CombatParticipant): Skill | null {
 }
 
 function decideOutcome(state: CombatState): CombatOutcome {
+  if (state.type === "spar") {
+    if (state.player.hp <= getSparFloor(state.player.maxHp)) return "defeat";
+    if (state.enemy.hp <= getSparFloor(state.enemy.maxHp)) return "victory";
+    return "ongoing";
+  }
+
   if (state.player.hp <= 0) return "defeat";
   if (state.enemy.hp <= 0) return "victory";
   return "ongoing";
@@ -136,7 +166,7 @@ export function stepCombat(state: CombatState, action: CombatAction): CombatStat
         text: "招式未曾习得，心神微乱。",
       });
     } else {
-      const result = applySkill(player, enemy, skill, randomJitter());
+      const result = applySkill(player, enemy, skill, randomJitter(), state.type);
       player = result.actor;
       enemy = result.target;
       log.push({ round: state.round, actor: "player", text: result.text });
@@ -153,7 +183,7 @@ export function stepCombat(state: CombatState, action: CombatAction): CombatStat
         text: `${enemy.name} 真元枯竭，喘息不定。`,
       });
     } else {
-      const result = applySkill(enemy, player, enemySkill, randomJitter());
+      const result = applySkill(enemy, player, enemySkill, randomJitter(), state.type);
       enemy = result.actor;
       player = result.target;
       log.push({ round: state.round, actor: "enemy", text: result.text });
@@ -163,6 +193,7 @@ export function stepCombat(state: CombatState, action: CombatAction): CombatStat
 
   return {
     round: state.round + 1,
+    type: state.type,
     player,
     enemy,
     log,
@@ -173,9 +204,13 @@ export function stepCombat(state: CombatState, action: CombatAction): CombatStat
 export function outcomeSummary(state: CombatState): string {
   switch (state.outcome) {
     case "victory":
-      return `${state.player.name} 击败了 ${state.enemy.name}。`;
+      return state.type === "spar"
+        ? `${state.player.name} 在比试中压过 ${state.enemy.name}，胜负已分。`
+        : `${state.player.name} 击败了 ${state.enemy.name}。`;
     case "defeat":
-      return `${state.player.name} 被 ${state.enemy.name} 击败，气血见底。`;
+      return state.type === "spar"
+        ? `${state.player.name} 在比试中落入下风，被 ${state.enemy.name} 逼至极限。`
+        : `${state.player.name} 被 ${state.enemy.name} 击败，气血见底。`;
     case "fled":
       return `${state.player.name} 自战场中遁走。`;
     default:

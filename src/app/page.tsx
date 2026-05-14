@@ -11,8 +11,8 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import { CombatPanel } from "@/components/chat/CombatPanel";
 import { normalizeChatMessages } from "@/lib/chat/messages";
 import { getOrCreateSessionId } from "@/lib/chat/session";
-import { starterWorldState } from "@/lib/game/schema";
 import { gameTools } from "@/lib/ai/tools";
+import { starterWorldState, type WorldState } from "@/lib/game/schema";
 
 type GameUIMessage = UIMessage<never, Record<string, unknown>, InferUITools<typeof gameTools>>;
 type LlmConfigResponse = {
@@ -25,12 +25,29 @@ type LlmConfigResponse = {
   };
 };
 
+async function persistWorldState(sessionId: string, worldState: WorldState) {
+  const res = await fetch("/api/world", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ sessionId, worldState }),
+  });
+
+  if (!res.ok) {
+    const data = (await res.json()) as { error?: string };
+    throw new Error(data.error || "保存世界状态失败");
+  }
+}
+
 export default function Home() {
   const [input, setInput] = useState("");
   const [sessionId] = useState(() => getOrCreateSessionId());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [bootError, setBootError] = useState<string | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [worldLoaded, setWorldLoaded] = useState(false);
+  const [worldState, setWorldState] = useState<WorldState>(starterWorldState);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
   const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
@@ -111,7 +128,28 @@ export default function Home() {
       }
     };
 
+    const loadWorld = async () => {
+      try {
+        const res = await fetch(`/api/world?sessionId=${encodeURIComponent(sessionId)}`);
+        if (!res.ok) {
+          throw new Error("加载世界状态失败");
+        }
+
+        const data = (await res.json()) as { worldState?: WorldState };
+        if (!cancelled && data.worldState) {
+          setWorldState(data.worldState);
+          setWorldLoaded(true);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setBootError(err instanceof Error ? err.message : "加载世界状态失败");
+          setWorldLoaded(true);
+        }
+      }
+    };
+
     void loadHistory();
+    void loadWorld();
 
     return () => {
       cancelled = true;
@@ -124,7 +162,7 @@ export default function Home() {
   }, [messages]);
 
   const busy = status === "streaming" || status === "submitted";
-  const chatReady = historyLoaded && configLoaded && hasSavedApiKey && Boolean(modelId.trim());
+  const chatReady = historyLoaded && worldLoaded && configLoaded && hasSavedApiKey && Boolean(modelId.trim());
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -221,8 +259,62 @@ export default function Home() {
     }
   };
 
-  const player = starterWorldState.player;
-  const world = starterWorldState;
+  const handleCombatFinish = async (
+    toolCallId: string,
+    result: {
+      outcome: "victory" | "defeat" | "fled";
+      summary: string;
+      player: { hp: number; maxHp: number; qi: number; maxQi: number };
+      enemy: { id: string; hp: number; maxHp: number; qi: number; maxQi: number };
+    },
+  ) => {
+    if (!sessionId) return;
+
+    const nextNpc =
+      worldState.activeNpc.id === result.enemy.id
+        ? {
+            ...worldState.activeNpc,
+            hp: result.enemy.hp,
+            maxHp: result.enemy.maxHp,
+            qi: result.enemy.qi,
+            maxQi: result.enemy.maxQi,
+          }
+        : worldState.activeNpc;
+
+    const nextWorldState: WorldState = {
+      ...worldState,
+      player: {
+        ...worldState.player,
+        hp: result.player.hp,
+        maxHp: result.player.maxHp,
+        qi: result.player.qi,
+        maxQi: result.player.maxQi,
+      },
+      activeNpc: nextNpc,
+    };
+
+    setWorldState(nextWorldState);
+
+    try {
+      await persistWorldState(sessionId, nextWorldState);
+    } catch (err) {
+      setBootError(err instanceof Error ? err.message : "保存世界状态失败");
+    }
+
+    addToolOutput({
+      tool: "startCombat",
+      toolCallId,
+      output: {
+        outcome: result.outcome,
+        summary: result.summary,
+        player: result.player,
+        enemy: result.enemy,
+      },
+    });
+  };
+
+  const player = worldState.player;
+  const world = worldState;
 
   return (
     <main className="chat-shell">
@@ -405,6 +497,7 @@ export default function Home() {
 
         <section className="chat-log" aria-live="polite" ref={logRef}>
           {!historyLoaded && <p className="chat-empty">正在回溯此前的因果……</p>}
+          {!worldLoaded && <p className="chat-empty">正在载入当前命盘……</p>}
           {bootError && <p className="chat-error">会话读取失败：{bootError}</p>}
           {configLoaded && !hasSavedApiKey && (
             <p className="chat-empty">先在上方填写并保存模型配置，之后才能开始对话。</p>
@@ -445,23 +538,26 @@ export default function Home() {
                     }
 
                     if (part.state === "input-available") {
-                      const { enemy, triggerDescription } = part.input;
+                      const { combatType, enemy, triggerDescription } = part.input;
                       return (
                         <CombatPanel
                           key={`${m.id}-${i}`}
-                          player={starterWorldState.player}
+                          player={worldState.player}
                           enemy={enemy}
+                          combatType={combatType}
                           triggerDescription={triggerDescription}
-                          onFinish={(outcome, summary) => {
+                          onFinish={(result) => {
                             const finalOutcome = (
-                              outcome === "victory" || outcome === "defeat" || outcome === "fled"
-                                ? outcome
+                              result.outcome === "victory" ||
+                              result.outcome === "defeat" ||
+                              result.outcome === "fled"
+                                ? result.outcome
                                 : "defeat"
                             ) as "victory" | "defeat" | "fled";
-                            addToolOutput({
-                              tool: "startCombat",
-                              toolCallId: part.toolCallId,
-                              output: { outcome: finalOutcome, summary },
+
+                            void handleCombatFinish(part.toolCallId, {
+                              ...result,
+                              outcome: finalOutcome,
                             });
                           }}
                         />

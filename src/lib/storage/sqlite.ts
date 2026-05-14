@@ -3,15 +3,19 @@ import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { UIMessage } from "ai";
 import { normalizeChatMessages } from "@/lib/chat/messages";
+import { starterWorldState, type WorldState } from "@/lib/game/schema";
 
 const defaultDatabasePath = join(process.cwd(), "data", "app.db");
 const databasePath = resolve(defaultDatabasePath);
 
 mkdirSync(dirname(databasePath), { recursive: true });
 
-const db = new DatabaseSync(databasePath);
+const db = new DatabaseSync(databasePath, {
+  timeout: 5000,
+});
 
 db.exec(`
+  PRAGMA busy_timeout = 5000;
   PRAGMA journal_mode = WAL;
   PRAGMA foreign_keys = ON;
 
@@ -42,6 +46,14 @@ db.exec(`
     created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
   );
+
+  CREATE TABLE IF NOT EXISTS world_states (
+    session_id TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+  );
 `);
 
 type SessionRow = {
@@ -50,6 +62,10 @@ type SessionRow = {
 
 type MessageRow = {
   message_json: string;
+};
+
+type WorldStateRow = {
+  state_json: string;
 };
 
 type LlmConfig = {
@@ -92,6 +108,20 @@ const selectMessagesStatement = db.prepare(`
   ORDER BY id ASC
 `);
 
+const upsertWorldStateStatement = db.prepare(`
+  INSERT INTO world_states (session_id, state_json)
+  VALUES (?, ?)
+  ON CONFLICT(session_id) DO UPDATE SET
+    state_json = excluded.state_json,
+    updated_at = CURRENT_TIMESTAMP
+`);
+
+const selectWorldStateStatement = db.prepare(`
+  SELECT state_json
+  FROM world_states
+  WHERE session_id = ?
+`);
+
 const deleteSessionMessagesStatement = db.prepare(`
   DELETE FROM chat_messages
   WHERE session_id = ?
@@ -115,7 +145,11 @@ const selectConfigStatement = db.prepare(`
 `);
 
 export function ensureChatSession(sessionId: string) {
+  const exists = chatSessionExists(sessionId);
   ensureSessionStatement.run(sessionId);
+  if (!exists) {
+    upsertWorldStateStatement.run(sessionId, JSON.stringify(starterWorldState));
+  }
 }
 
 export function chatSessionExists(sessionId: string) {
@@ -125,6 +159,21 @@ export function chatSessionExists(sessionId: string) {
 export function loadChatMessages(sessionId: string): UIMessage[] {
   const rows = selectMessagesStatement.all(sessionId) as MessageRow[];
   return normalizeChatMessages(rows.map((row) => JSON.parse(row.message_json) as UIMessage));
+}
+
+export function loadWorldState(sessionId: string): WorldState {
+  ensureChatSession(sessionId);
+  const row = selectWorldStateStatement.get(sessionId) as WorldStateRow | undefined;
+  if (!row) {
+    return structuredClone(starterWorldState);
+  }
+  return JSON.parse(row.state_json) as WorldState;
+}
+
+export function saveWorldState(sessionId: string, worldState: WorldState) {
+  ensureSessionStatement.run(sessionId);
+  upsertWorldStateStatement.run(sessionId, JSON.stringify(worldState));
+  touchSessionStatement.run(sessionId);
 }
 
 export function saveChatMessages(sessionId: string, messages: UIMessage[]) {

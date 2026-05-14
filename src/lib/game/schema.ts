@@ -55,6 +55,8 @@ export type WorldState = {
   activeQuest: QuestState;
 };
 
+export type CombatType = "spar" | "lethal";
+
 export type CombatOutcome = "ongoing" | "victory" | "defeat" | "fled";
 
 export type CombatParticipant = {
@@ -76,6 +78,7 @@ export type CombatLogEntry = {
 
 export type CombatState = {
   round: number;
+  type: CombatType;
   player: CombatParticipant;
   enemy: CombatParticipant;
   log: CombatLogEntry[];

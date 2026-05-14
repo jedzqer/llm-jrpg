@@ -30,6 +30,9 @@ export const gameTools = {
     description:
       "当剧情进入战斗时立即调用。传入对手的完整 NPC 信息，战斗系统将接管并在战斗结束后把结果返回给你，你再根据结果继续叙事。",
     inputSchema: z.object({
+      combatType: z
+        .enum(["spar", "lethal"])
+        .describe("战斗类型。比试切磋用 spar，生死厮杀用 lethal。"),
       enemy: npcSchema,
       triggerDescription: z
         .string()
@@ -38,6 +41,19 @@ export const gameTools = {
     outputSchema: z.object({
       outcome: z.enum(["victory", "defeat", "fled"]),
       summary: z.string().describe("战斗结果的一句话总结，供叙事引擎继续剧情。"),
+      player: z.object({
+        hp: z.number(),
+        maxHp: z.number(),
+        qi: z.number(),
+        maxQi: z.number(),
+      }),
+      enemy: z.object({
+        id: z.string(),
+        hp: z.number(),
+        maxHp: z.number(),
+        qi: z.number(),
+        maxQi: z.number(),
+      }),
     }),
     // 无 execute → 客户端托管，由前端 addToolOutput 回传结果
   }),

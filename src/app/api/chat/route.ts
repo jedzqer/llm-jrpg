@@ -1,13 +1,14 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { convertToModelMessages, stepCountIs, streamText, type UIMessage } from "ai";
 import { NextResponse } from "next/server";
-import { baseSystemPrompt } from "@/lib/ai/prompts";
+import { buildSystemPrompt } from "@/lib/ai/prompts";
 import { normalizeChatMessages } from "@/lib/chat/messages";
 import { gameTools } from "@/lib/ai/tools";
 import {
   ensureChatSession,
   getResolvedLlmConfig,
   loadChatMessages,
+  loadWorldState,
   replaceChatMessages,
   saveChatMessages,
 } from "@/lib/storage/sqlite";
@@ -57,6 +58,7 @@ export async function POST(req: Request) {
   }
 
   const normalizedMessages = normalizeChatMessages(messages);
+  const worldState = loadWorldState(sessionId);
 
   // reasoning_content values from prior assistant UI messages, one per message in order.
   // DeepSeek thinking mode is strict about this field during tool-call continuations:
@@ -151,7 +153,7 @@ export async function POST(req: Request) {
 
   const result = streamText({
     model: provider.chat(modelId),
-    system: baseSystemPrompt,
+    system: buildSystemPrompt(worldState),
     messages: await convertToModelMessages(normalizedMessages),
     stopWhen: stepCountIs(2),
     tools: gameTools,
