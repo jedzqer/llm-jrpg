@@ -10,7 +10,6 @@ import {
 import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { CombatPanel } from "@/components/chat/CombatPanel";
 import { RichText } from "@/components/chat/RichText";
-import { normalizeChatMessages } from "@/lib/chat/messages";
 import { getOrCreateSessionId } from "@/lib/chat/session";
 import { gameTools } from "@/lib/ai/tools";
 import { starterWorldState, type WorldState } from "@/lib/game/schema";
@@ -41,6 +40,11 @@ async function persistWorldState(sessionId: string, worldState: WorldState) {
   }
 }
 
+type SaveStatusResponse = {
+  hasSave: boolean;
+  updatedAt: string | null;
+};
+
 export default function Home() {
   const [input, setInput] = useState("");
   const [sessionId] = useState(() => getOrCreateSessionId());
@@ -51,7 +55,10 @@ export default function Home() {
   const [worldState, setWorldState] = useState<WorldState>(starterWorldState);
   const [configLoaded, setConfigLoaded] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
-  const [deletingMessageId, setDeletingMessageId] = useState<string | null>(null);
+  const [saveBusy, setSaveBusy] = useState(false);
+  const [loadBusy, setLoadBusy] = useState(false);
+  const [hasSave, setHasSave] = useState(false);
+  const [saveUpdatedAt, setSaveUpdatedAt] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [configNotice, setConfigNotice] = useState<string | null>(null);
   const [databasePath, setDatabasePath] = useState("");
@@ -149,8 +156,28 @@ export default function Home() {
       }
     };
 
+    const loadSaveStatus = async () => {
+      try {
+        const res = await fetch(`/api/save?sessionId=${encodeURIComponent(sessionId)}`);
+        if (!res.ok) {
+          throw new Error("读取存档状态失败");
+        }
+
+        const data = (await res.json()) as SaveStatusResponse;
+        if (!cancelled) {
+          setHasSave(Boolean(data.hasSave));
+          setSaveUpdatedAt(data.updatedAt ?? null);
+        }
+      } catch (err) {
+        if (!cancelled) {
+          setBootError(err instanceof Error ? err.message : "读取存档状态失败");
+        }
+      }
+    };
+
     void loadHistory();
     void loadWorld();
+    void loadSaveStatus();
 
     return () => {
       cancelled = true;
@@ -163,7 +190,14 @@ export default function Home() {
   }, [messages]);
 
   const busy = status === "streaming" || status === "submitted";
-  const chatReady = historyLoaded && worldLoaded && configLoaded && hasSavedApiKey && Boolean(modelId.trim());
+  const playerDead = worldState.player.hp <= 0;
+  const chatReady =
+    historyLoaded &&
+    worldLoaded &&
+    configLoaded &&
+    hasSavedApiKey &&
+    Boolean(modelId.trim()) &&
+    !playerDead;
 
   const submit = (e: FormEvent) => {
     e.preventDefault();
@@ -232,31 +266,67 @@ export default function Home() {
     }
   };
 
-  const deleteMessage = async (messageId: string) => {
-    if (!sessionId || deletingMessageId) return;
+  const saveGame = async () => {
+    if (!sessionId || busy || saveBusy || loadBusy) return;
 
-    setDeletingMessageId(messageId);
+    setSaveBusy(true);
     setBootError(null);
 
     try {
-      const res = await fetch("/api/chat", {
-        method: "DELETE",
+      const res = await fetch("/api/save", {
+        method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ sessionId, messageId }),
+        body: JSON.stringify({ sessionId }),
       });
 
-      const data = (await res.json()) as { error?: string; messages?: GameUIMessage[] };
+      const data = (await res.json()) as { error?: string; updatedAt?: string | null };
       if (!res.ok) {
-        throw new Error(data.error || "删除消息失败");
+        throw new Error(data.error || "存档失败");
       }
 
-      setMessages(normalizeChatMessages(data.messages || []));
+      setHasSave(true);
+      setSaveUpdatedAt(data.updatedAt ?? null);
     } catch (err) {
-      setBootError(err instanceof Error ? err.message : "删除消息失败");
+      setBootError(err instanceof Error ? err.message : "存档失败");
     } finally {
-      setDeletingMessageId(null);
+      setSaveBusy(false);
+    }
+  };
+
+  const loadGame = async () => {
+    if (!sessionId || busy || saveBusy || loadBusy || !hasSave) return;
+
+    setLoadBusy(true);
+    setBootError(null);
+
+    try {
+      const res = await fetch("/api/save", {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ sessionId }),
+      });
+
+      const data = (await res.json()) as {
+        error?: string;
+        messages?: GameUIMessage[];
+        worldState?: WorldState;
+        updatedAt?: string | null;
+      };
+      if (!res.ok || !data.messages || !data.worldState) {
+        throw new Error(data.error || "读档失败");
+      }
+
+      setMessages(data.messages);
+      setWorldState(data.worldState);
+      setSaveUpdatedAt(data.updatedAt ?? null);
+    } catch (err) {
+      setBootError(err instanceof Error ? err.message : "读档失败");
+    } finally {
+      setLoadBusy(false);
     }
   };
 
@@ -413,19 +483,42 @@ export default function Home() {
               <p className="eyebrow">LLM 修仙 · 原型</p>
               <h1>青云宗 · 外门</h1>
             </div>
-            <button
-              type="button"
-              className={`button settings-button ${settingsOpen ? "active" : ""}`}
-              onClick={() => setSettingsOpen((open) => !open)}
-              aria-expanded={settingsOpen}
-              aria-controls="llm-settings"
-            >
-              设置
-            </button>
+            <div className="header-actions">
+              <button
+                type="button"
+                className="button"
+                onClick={() => void saveGame()}
+                disabled={!sessionId || busy || saveBusy || loadBusy}
+              >
+                {saveBusy ? "存档中……" : "存档"}
+              </button>
+              <button
+                type="button"
+                className="button"
+                onClick={() => void loadGame()}
+                disabled={!sessionId || busy || saveBusy || loadBusy || !hasSave}
+              >
+                {loadBusy ? "读档中……" : "读档"}
+              </button>
+              <button
+                type="button"
+                className={`button settings-button ${settingsOpen ? "active" : ""}`}
+                onClick={() => setSettingsOpen((open) => !open)}
+                aria-expanded={settingsOpen}
+                aria-controls="llm-settings"
+              >
+                设置
+              </button>
+            </div>
           </div>
           <p className="lede">
             演武场试炼初日，雨后青石湿亮。执事林挽玉立于高台，目光掠过你袖中那枚来历不明的青铜铃。
             说一句话，看看你这一世的修途从何处起步。
+          </p>
+          <p className="save-meta">
+            {hasSave
+              ? `当前存档：${saveUpdatedAt ? new Date(saveUpdatedAt).toLocaleString() : "已存在"}`
+              : "当前没有存档。"}
           </p>
         </header>
 
@@ -506,6 +599,9 @@ export default function Home() {
           {configLoaded && hasSavedApiKey && !modelId.trim() && (
             <p className="chat-empty">请先填写模型 ID 并保存，然后再开始对话。</p>
           )}
+          {playerDead && (
+            <p className="chat-error">你已身死道消，当前只能读档重来。请先点击上方“读档”。</p>
+          )}
           {messages.length === 0 && (
             <p className="chat-empty">先开口说点什么，或者做点什么。比如「上前行礼，通报姓名」。</p>
           )}
@@ -513,15 +609,6 @@ export default function Home() {
             <article key={m.id} className={`chat-turn ${m.role}`}>
               <div className="chat-turn-head">
                 <span className="chat-role">{m.role === "user" ? "你" : "叙事"}</span>
-                <button
-                  type="button"
-                  className="message-delete"
-                  onClick={() => void deleteMessage(m.id)}
-                  disabled={busy || deletingMessageId === m.id}
-                  aria-label="删除这条消息"
-                >
-                  {deletingMessageId === m.id ? "删除中……" : "删除"}
-                </button>
               </div>
               <div className="chat-body">
                 {m.parts.map((part, i) => {
@@ -592,7 +679,7 @@ export default function Home() {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onKeyDown}
-            placeholder="述说你的言语或行动……（Enter 发送，Shift+Enter 换行）"
+            placeholder={playerDead ? "你已死亡，请先读档。" : "述说你的言语或行动……（Enter 发送，Shift+Enter 换行）"}
             rows={3}
             disabled={busy || !chatReady || !sessionId}
           />

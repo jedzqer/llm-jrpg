@@ -258,6 +258,13 @@ textarea {
   align-items: start;
 }
 
+.header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: flex-end;
+}
+
 .chat-header h1 {
   font-size: clamp(1.8rem, 4vw, 2.4rem);
   line-height: 1.1;
@@ -320,7 +327,8 @@ textarea {
 
 .config-meta,
 .config-help,
-.config-status {
+.config-status,
+.save-meta {
   color: var(--muted);
   line-height: 1.6;
 }
@@ -438,25 +446,6 @@ textarea {
   font-size: 0.75rem;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-}
-
-.message-delete {
-  border: 0;
-  background: transparent;
-  color: var(--muted);
-  font-size: 0.8rem;
-  cursor: pointer;
-  padding: 0;
-  transition: color 180ms ease;
-}
-
-.message-delete:hover:not(:disabled) {
-  color: var(--accent-strong);
-}
-
-.message-delete:disabled {
-  cursor: not-allowed;
-  opacity: 0.6;
 }
 
 .chat-body {
@@ -586,6 +575,11 @@ textarea {
   .chat-header-top {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .header-actions {
+    width: 100%;
+    justify-content: flex-start;
   }
 
   .config-meta {

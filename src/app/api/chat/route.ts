@@ -9,7 +9,6 @@ import {
   getResolvedLlmConfig,
   loadChatMessages,
   loadWorldState,
-  replaceChatMessages,
   saveChatMessages,
 } from "@/lib/storage/sqlite";
 
@@ -181,24 +180,4 @@ export async function POST(req: Request) {
       saveChatMessages(sessionId, [...normalizedMessages, toSave]);
     },
   });
-}
-
-export async function DELETE(req: Request) {
-  const {
-    sessionId,
-    messageId,
-  }: {
-    sessionId?: string;
-    messageId?: string;
-  } = await req.json();
-
-  if (!sessionId || !messageId) {
-    return NextResponse.json({ error: "sessionId and messageId are required" }, { status: 400 });
-  }
-
-  const messages = loadChatMessages(sessionId);
-  const nextMessages = normalizeChatMessages(messages.filter((message) => message.id !== messageId));
-  replaceChatMessages(sessionId, nextMessages);
-
-  return NextResponse.json({ ok: true, messages: nextMessages });
 }

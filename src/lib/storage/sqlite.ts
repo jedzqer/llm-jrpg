@@ -54,6 +54,15 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS save_slots (
+    session_id TEXT PRIMARY KEY,
+    messages_json TEXT NOT NULL,
+    world_state_json TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (session_id) REFERENCES chat_sessions(id) ON DELETE CASCADE
+  );
 `);
 
 type SessionRow = {
@@ -66,6 +75,12 @@ type MessageRow = {
 
 type WorldStateRow = {
   state_json: string;
+};
+
+type SaveSlotRow = {
+  messages_json: string;
+  world_state_json: string;
+  updated_at: string;
 };
 
 type LlmConfig = {
@@ -119,6 +134,21 @@ const upsertWorldStateStatement = db.prepare(`
 const selectWorldStateStatement = db.prepare(`
   SELECT state_json
   FROM world_states
+  WHERE session_id = ?
+`);
+
+const upsertSaveSlotStatement = db.prepare(`
+  INSERT INTO save_slots (session_id, messages_json, world_state_json)
+  VALUES (?, ?, ?)
+  ON CONFLICT(session_id) DO UPDATE SET
+    messages_json = excluded.messages_json,
+    world_state_json = excluded.world_state_json,
+    updated_at = CURRENT_TIMESTAMP
+`);
+
+const selectSaveSlotStatement = db.prepare(`
+  SELECT messages_json, world_state_json, updated_at
+  FROM save_slots
   WHERE session_id = ?
 `);
 
@@ -201,6 +231,70 @@ export function saveChatMessages(sessionId: string, messages: UIMessage[]) {
 
 export function replaceChatMessages(sessionId: string, messages: UIMessage[]) {
   saveChatMessages(sessionId, messages);
+}
+
+export function saveCheckpoint(sessionId: string, messages: UIMessage[], worldState: WorldState) {
+  const normalizedMessages = normalizeChatMessages(messages);
+
+  db.exec("BEGIN");
+  try {
+    ensureSessionStatement.run(sessionId);
+    upsertSaveSlotStatement.run(
+      sessionId,
+      JSON.stringify(normalizedMessages),
+      JSON.stringify(worldState),
+    );
+    touchSessionStatement.run(sessionId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+}
+
+export function loadCheckpoint(sessionId: string):
+  | { messages: UIMessage[]; worldState: WorldState; updatedAt: string }
+  | null {
+  ensureChatSession(sessionId);
+  const row = selectSaveSlotStatement.get(sessionId) as SaveSlotRow | undefined;
+  if (!row) {
+    return null;
+  }
+
+  return {
+    messages: normalizeChatMessages(JSON.parse(row.messages_json) as UIMessage[]),
+    worldState: JSON.parse(row.world_state_json) as WorldState,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function restoreCheckpoint(sessionId: string) {
+  const checkpoint = loadCheckpoint(sessionId);
+  if (!checkpoint) {
+    return null;
+  }
+
+  db.exec("BEGIN");
+  try {
+    ensureSessionStatement.run(sessionId);
+    deleteSessionMessagesStatement.run(sessionId);
+    for (const message of checkpoint.messages) {
+      insertMessageStatement.run(
+        sessionId,
+        message.id,
+        message.role,
+        JSON.stringify(message),
+      );
+    }
+    upsertWorldStateStatement.run(sessionId, JSON.stringify(checkpoint.worldState));
+    touchSessionStatement.run(sessionId);
+    db.exec("COMMIT");
+  } catch (error) {
+    db.exec("ROLLBACK");
+    throw error;
+  }
+
+  return checkpoint;
 }
 
 export function saveLlmConfig(config: LlmConfig) {
