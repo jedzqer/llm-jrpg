@@ -201,6 +201,12 @@ textarea {
   line-height: 1.6;
 }
 
+.player-scene-card strong {
+  color: var(--accent-strong);
+  font-size: 0.92rem;
+  font-family: var(--font-geist-mono), monospace;
+}
+
 .token-list,
 .skill-list {
   display: grid;
@@ -525,6 +531,18 @@ textarea {
   gap: 10px;
   line-height: 1.8;
   text-wrap: pretty;
+}
+
+.chat-status-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 18px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(226, 211, 184, 0.1);
+  color: var(--muted);
+  font-size: 0.8rem;
+  font-family: var(--font-geist-mono), monospace;
 }
 
 .chat-body strong {

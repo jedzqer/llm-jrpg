@@ -46,10 +46,17 @@ export type QuestState = {
   objective: string;
 };
 
+export type WorldTime = {
+  day: number;
+  phase: string;
+  clock: string;
+};
+
 export type WorldState = {
   era: string;
   location: string;
   scene: string;
+  time: WorldTime;
   player: PlayerState;
   activeNpc: NpcState;
   activeQuest: QuestState;
@@ -112,10 +119,17 @@ const playerSkills: Skill[] = [
   },
 ];
 
+export const starterWorldTime: WorldTime = {
+  day: 1,
+  phase: "子夜将尽",
+  clock: "04:15",
+};
+
 export const starterWorldState: WorldState = {
   era: "灵气复苏第三百年，九州列国林立，正邪仙门对峙。",
   location: "青云宗·外门",
   scene: "演武场试炼初日，夜雨初霁，青石泛着湿光。",
+  time: starterWorldTime,
   player: {
     name: "沈惊蛰",
     realm: "炼气三层",
@@ -158,3 +172,42 @@ export const starterWorldState: WorldState = {
     objective: "在林挽玉执事主持的首轮比试中立足，争取下月宗门任务的名额。",
   },
 };
+
+export function formatWorldTime(time: WorldTime) {
+  return `第 ${time.day} 日 · ${time.phase} · ${time.clock}`;
+}
+
+export function normalizeWorldState(worldState?: Partial<WorldState> | null): WorldState {
+  const base = structuredClone(starterWorldState);
+
+  if (!worldState) {
+    return base;
+  }
+
+  return {
+    era: worldState.era ?? base.era,
+    location: worldState.location ?? base.location,
+    scene: worldState.scene ?? base.scene,
+    time: {
+      day: worldState.time?.day ?? base.time.day,
+      phase: worldState.time?.phase ?? base.time.phase,
+      clock: worldState.time?.clock ?? base.time.clock,
+    },
+    player: {
+      ...base.player,
+      ...worldState.player,
+      inventory: worldState.player?.inventory ?? base.player.inventory,
+      skills: worldState.player?.skills ?? base.player.skills,
+    },
+    activeNpc: {
+      ...base.activeNpc,
+      ...worldState.activeNpc,
+      inventory: worldState.activeNpc?.inventory ?? base.activeNpc.inventory,
+      skills: worldState.activeNpc?.skills ?? base.activeNpc.skills,
+    },
+    activeQuest: {
+      ...base.activeQuest,
+      ...worldState.activeQuest,
+    },
+  };
+}

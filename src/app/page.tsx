@@ -11,8 +11,8 @@ import { useEffect, useRef, useState, type FormEvent, type KeyboardEvent } from 
 import { CombatPanel } from "@/components/chat/CombatPanel";
 import { RichText } from "@/components/chat/RichText";
 import { getOrCreateSessionId } from "@/lib/chat/session";
-import { gameTools } from "@/lib/ai/tools";
-import { starterWorldState, type WorldState } from "@/lib/game/schema";
+import { gameTools, type WorldStateChangeInput } from "@/lib/ai/tools";
+import { formatWorldTime, normalizeWorldState, starterWorldState, type WorldState } from "@/lib/game/schema";
 
 type GameUIMessage = UIMessage<never, Record<string, unknown>, InferUITools<typeof gameTools>>;
 type LlmConfigResponse = {
@@ -40,6 +40,72 @@ async function persistWorldState(sessionId: string, worldState: WorldState) {
   }
 }
 
+function applyWorldStateChange(worldState: WorldState, change: WorldStateChangeInput): WorldState {
+  return normalizeWorldState({
+    ...worldState,
+    location: change.location ?? worldState.location,
+    scene: change.scene ?? worldState.scene,
+    time: change.time ? { ...worldState.time, ...change.time } : worldState.time,
+    activeQuest: change.quest
+      ? {
+          ...worldState.activeQuest,
+          stage: change.quest.stage ?? worldState.activeQuest.stage,
+          objective: change.quest.objective ?? worldState.activeQuest.objective,
+        }
+      : worldState.activeQuest,
+  });
+}
+
+function summarizeWorldStateChange(previous: WorldState, next: WorldState) {
+  const changes: string[] = [];
+
+  if (previous.location !== next.location) {
+    changes.push(`地点变更为 ${next.location}`);
+  }
+  if (
+    previous.time.day !== next.time.day ||
+    previous.time.phase !== next.time.phase ||
+    previous.time.clock !== next.time.clock
+  ) {
+    changes.push(`时间推进至 ${formatWorldTime(next.time)}`);
+  }
+  if (previous.scene !== next.scene) {
+    changes.push(`场景更新为 ${next.scene}`);
+  }
+  if (previous.activeQuest.stage !== next.activeQuest.stage) {
+    changes.push(`任务阶段变更为 ${next.activeQuest.stage}`);
+  }
+  if (previous.activeQuest.objective !== next.activeQuest.objective) {
+    changes.push(`任务目标更新为 ${next.activeQuest.objective}`);
+  }
+
+  return changes.join("；") || "世界状态未发生可见变化";
+}
+
+function getMessageStatusSnapshot(message: GameUIMessage, fallback: WorldState) {
+  const statusPart = [...message.parts]
+    .reverse()
+    .find((part) => part.type === "tool-updateWorldState" && part.state === "output-available") as
+    | {
+        output?: {
+          snapshot?: {
+            location: string;
+            scene: string;
+            time: WorldState["time"];
+          };
+        };
+      }
+    | undefined;
+
+  return (
+    statusPart?.output?.snapshot ?? {
+      location: fallback.location,
+      scene: fallback.scene,
+      time: fallback.time,
+    }
+  );
+}
+
 type SaveStatusResponse = {
   saveSlots: Array<{
     slotIndex: number;
@@ -47,6 +113,7 @@ type SaveStatusResponse = {
     playerName: string | null;
     playerRealm: string | null;
     location: string | null;
+    timeLabel?: string | null;
   }>;
 };
 
@@ -57,6 +124,7 @@ export default function Home() {
     playerName: null,
     playerRealm: null,
     location: null,
+    timeLabel: null,
   }));
 
   const [input, setInput] = useState("");
@@ -80,6 +148,7 @@ export default function Home() {
   const [baseURL, setBaseURL] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [hasSavedApiKey, setHasSavedApiKey] = useState(false);
+  const appliedWorldToolCallsRef = useRef(new Set<string>());
 
   const { messages, setMessages, sendMessage, status, error, addToolOutput } =
     useChat<GameUIMessage>({
@@ -158,7 +227,7 @@ export default function Home() {
 
         const data = (await res.json()) as { worldState?: WorldState };
         if (!cancelled && data.worldState) {
-          setWorldState(data.worldState);
+          setWorldState(normalizeWorldState(data.worldState));
           setWorldLoaded(true);
         }
       } catch (err) {
@@ -200,6 +269,60 @@ export default function Home() {
   useEffect(() => {
     logRef.current?.scrollTo({ top: logRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
+
+  useEffect(() => {
+    if (!sessionId) return;
+
+    const pending = messages.flatMap((message) =>
+      message.parts.flatMap((part) => {
+        if (part.type !== "tool-updateWorldState" || part.state !== "input-available") {
+          return [];
+        }
+        if (appliedWorldToolCallsRef.current.has(part.toolCallId)) {
+          return [];
+        }
+
+        return [{ toolCallId: part.toolCallId, input: part.input as WorldStateChangeInput }];
+      }),
+    );
+
+    if (pending.length === 0) {
+      return;
+    }
+
+    let nextWorldState = worldState;
+    const outputs = pending.map(({ toolCallId, input }) => {
+      appliedWorldToolCallsRef.current.add(toolCallId);
+      const previousWorldState = nextWorldState;
+      nextWorldState = applyWorldStateChange(nextWorldState, input);
+      return {
+        toolCallId,
+        output: {
+          summary: summarizeWorldStateChange(previousWorldState, nextWorldState),
+          snapshot: {
+            location: nextWorldState.location,
+            scene: nextWorldState.scene,
+            time: nextWorldState.time,
+            questStage: nextWorldState.activeQuest.stage,
+            questObjective: nextWorldState.activeQuest.objective,
+          },
+        },
+      };
+    });
+
+    setWorldState(nextWorldState);
+    for (const { toolCallId, output } of outputs) {
+      addToolOutput({
+        tool: "updateWorldState",
+        toolCallId,
+        output,
+      });
+    }
+
+    void persistWorldState(sessionId, nextWorldState).catch((err) => {
+      setBootError(err instanceof Error ? err.message : "保存世界状态失败");
+    });
+  }, [messages, sessionId, worldState, addToolOutput]);
 
   const busy = status === "streaming" || status === "submitted";
   const playerDead = worldState.player.hp <= 0;
@@ -337,7 +460,7 @@ export default function Home() {
 
       setActiveSlotIndex(slotIndex);
       setMessages(data.messages);
-      setWorldState(data.worldState);
+      setWorldState(normalizeWorldState(data.worldState));
       setSaveSlots(Array.isArray(data.saveSlots) ? data.saveSlots : []);
     } catch (err) {
       setBootError(err instanceof Error ? err.message : "读档失败");
@@ -380,10 +503,10 @@ export default function Home() {
       activeNpc: nextNpc,
     };
 
-    setWorldState(nextWorldState);
+    setWorldState(normalizeWorldState(nextWorldState));
 
     try {
-      await persistWorldState(sessionId, nextWorldState);
+      await persistWorldState(sessionId, normalizeWorldState(nextWorldState));
     } catch (err) {
       setBootError(err instanceof Error ? err.message : "保存世界状态失败");
     }
@@ -456,6 +579,7 @@ export default function Home() {
             </div>
             <div className="player-scene-card">
               <p>{world.location}</p>
+              <strong>{formatWorldTime(world.time)}</strong>
               <span>{world.scene}</span>
             </div>
           </section>
@@ -539,6 +663,7 @@ export default function Home() {
                     <strong className="save-slot-name">{slot.playerName ?? "未存档角色"}</strong>
                     <span className="save-slot-realm">{slot.playerRealm ?? "境界未知"}</span>
                     <span className="save-slot-location">{slot.location ?? "空档位"}</span>
+                    <span className="save-slot-time">{slot.timeLabel ?? "时序未定"}</span>
                     <span className="save-slot-time">
                       {slot.updatedAt ? new Date(slot.updatedAt).toLocaleString() : "尚未存档"}
                     </span>
@@ -665,6 +790,10 @@ export default function Home() {
                     );
                   }
 
+                  if (part.type === "tool-updateWorldState") {
+                    return null;
+                  }
+
                   if (part.type === "tool-startCombat") {
                     if (part.state === "input-streaming") {
                       return (
@@ -714,6 +843,19 @@ export default function Home() {
                   return null;
                 })}
               </div>
+              {m.role === "assistant" && (
+                <div className="chat-status-bar">
+                  {(() => {
+                    const snapshot = getMessageStatusSnapshot(m, worldState);
+                    return (
+                      <>
+                        <span>地点：{snapshot.location}</span>
+                        <span>时间：{formatWorldTime(snapshot.time)}</span>
+                      </>
+                    );
+                  })()}
+                </div>
+              )}
             </article>
           ))}
           {error && <p className="chat-error">出了点岔子：{error.message}</p>}

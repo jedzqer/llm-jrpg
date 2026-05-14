@@ -3,7 +3,12 @@ import { dirname, join, resolve } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import type { UIMessage } from "ai";
 import { normalizeChatMessages } from "@/lib/chat/messages";
-import { starterWorldState, type WorldState } from "@/lib/game/schema";
+import {
+  formatWorldTime,
+  normalizeWorldState,
+  starterWorldState,
+  type WorldState,
+} from "@/lib/game/schema";
 
 const defaultDatabasePath = join(process.cwd(), "data", "app.db");
 const databasePath = resolve(defaultDatabasePath);
@@ -264,12 +269,12 @@ export function loadWorldState(sessionId: string): WorldState {
   if (!row) {
     return structuredClone(starterWorldState);
   }
-  return JSON.parse(row.state_json) as WorldState;
+  return normalizeWorldState(JSON.parse(row.state_json) as WorldState);
 }
 
 export function saveWorldState(sessionId: string, worldState: WorldState) {
   ensureSessionStatement.run(sessionId);
-  upsertWorldStateStatement.run(sessionId, JSON.stringify(worldState));
+  upsertWorldStateStatement.run(sessionId, JSON.stringify(normalizeWorldState(worldState)));
   touchSessionStatement.run(sessionId);
 }
 
@@ -307,6 +312,7 @@ type SaveSlotSummary = {
   playerRealm: string | null;
   playerSect: string | null;
   location: string | null;
+  timeLabel: string | null;
   hp: number | null;
   maxHp: number | null;
   qi: number | null;
@@ -328,6 +334,7 @@ function buildSaveSlotSummary(slotIndex: number, row?: SaveSlotRow): SaveSlotSum
       playerRealm: null,
       playerSect: null,
       location: null,
+      timeLabel: null,
       hp: null,
       maxHp: null,
       qi: null,
@@ -335,7 +342,7 @@ function buildSaveSlotSummary(slotIndex: number, row?: SaveSlotRow): SaveSlotSum
     };
   }
 
-  const worldState = JSON.parse(row.world_state_json) as WorldState;
+  const worldState = normalizeWorldState(JSON.parse(row.world_state_json) as WorldState);
 
   return {
     slotIndex,
@@ -344,6 +351,7 @@ function buildSaveSlotSummary(slotIndex: number, row?: SaveSlotRow): SaveSlotSum
     playerRealm: worldState.player.realm,
     playerSect: worldState.player.sect,
     location: worldState.location,
+    timeLabel: formatWorldTime(worldState.time),
     hp: worldState.player.hp,
     maxHp: worldState.player.maxHp,
     qi: worldState.player.qi,
@@ -383,7 +391,7 @@ export function saveCheckpoint(
       sessionId,
       slotIndex,
       JSON.stringify(normalizedMessages),
-      JSON.stringify(worldState),
+      JSON.stringify(normalizeWorldState(worldState)),
     );
     touchSessionStatement.run(sessionId);
     db.exec("COMMIT");
@@ -403,7 +411,7 @@ export function loadCheckpoint(sessionId: string, slotIndex: number): Checkpoint
 
   return {
     messages: normalizeChatMessages(JSON.parse(row.messages_json) as UIMessage[]),
-    worldState: JSON.parse(row.world_state_json) as WorldState,
+    worldState: normalizeWorldState(JSON.parse(row.world_state_json) as WorldState),
     updatedAt: row.updated_at,
   };
 }
@@ -426,7 +434,7 @@ export function restoreCheckpoint(sessionId: string, slotIndex: number) {
         JSON.stringify(message),
       );
     }
-    upsertWorldStateStatement.run(sessionId, JSON.stringify(checkpoint.worldState));
+    upsertWorldStateStatement.run(sessionId, JSON.stringify(normalizeWorldState(checkpoint.worldState)));
     touchSessionStatement.run(sessionId);
     db.exec("COMMIT");
   } catch (error) {
