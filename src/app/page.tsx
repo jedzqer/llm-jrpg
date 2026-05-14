@@ -16,7 +16,17 @@ import {
   setStoredSessionId,
 } from "@/lib/chat/session";
 import { gameTools, type WorldStateChangeInput } from "@/lib/ai/tools";
-import { formatWorldTime, normalizeWorldState, starterWorldState, type WorldState } from "@/lib/game/schema";
+import {
+  CHARACTER_CREATION_TOTAL_POINTS,
+  characterCreationSpiritRoots,
+  createStarterWorldState,
+  defaultCharacterCreationProfile,
+  formatWorldTime,
+  normalizeWorldState,
+  starterWorldState,
+  type CharacterCreationProfile,
+  type WorldState,
+} from "@/lib/game/schema";
 
 type GameUIMessage = UIMessage<never, Record<string, unknown>, InferUITools<typeof gameTools>>;
 type LlmConfigResponse = {
@@ -122,6 +132,8 @@ type SaveStatusResponse = {
   }>;
 };
 
+type MenuMode = "root" | "load" | "create";
+
 export default function Home() {
   const emptySaveSlots = Array.from({ length: 10 }, (_, index) => ({
     sessionId: null,
@@ -137,8 +149,9 @@ export default function Home() {
   const [sessionId, setSessionId] = useState(() => getOrCreateSessionId());
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(true);
-  const [menuMode, setMenuMode] = useState<"root" | "load">("root");
+  const [menuMode, setMenuMode] = useState<MenuMode>("root");
   const [bootError, setBootError] = useState<string | null>(null);
+  const [menuError, setMenuError] = useState<string | null>(null);
   const [historyLoaded, setHistoryLoaded] = useState(false);
   const [worldLoaded, setWorldLoaded] = useState(false);
   const [worldState, setWorldState] = useState<WorldState>(starterWorldState);
@@ -158,6 +171,7 @@ export default function Home() {
   const [baseURL, setBaseURL] = useState("");
   const [apiKey, setApiKey] = useState("");
   const [hasSavedApiKey, setHasSavedApiKey] = useState(false);
+  const [characterProfile, setCharacterProfile] = useState<CharacterCreationProfile>(defaultCharacterCreationProfile);
   const appliedWorldToolCallsRef = useRef(new Set<string>());
 
   const { messages, setMessages, sendMessage, status, error, addToolOutput } =
@@ -576,22 +590,76 @@ export default function Home() {
   const world = worldState;
   const hasActiveProgress = messages.length > 0 || saveSlots.some((slot) => Boolean(slot.updatedAt));
   const visibleGlobalSaves = globalSaveSlots.filter((slot) => slot.updatedAt && slot.sessionId);
+  const remainingCreationPoints =
+    CHARACTER_CREATION_TOTAL_POINTS - characterProfile.maxHp - characterProfile.maxQi;
 
   const startNewGame = () => {
+    setMenuError(null);
+    setCharacterProfile(defaultCharacterCreationProfile);
+    setMenuMode("create");
+  };
+
+  const confirmNewGame = async () => {
+    const name = characterProfile.name.trim();
+    const sect = characterProfile.sect.trim();
+    const spiritRoot = characterProfile.spiritRoot.trim();
+
+    if (!name) {
+      setMenuError("请先为角色命名。");
+      return;
+    }
+
+    if (!sect) {
+      setMenuError("请填写角色出身或门派。");
+      return;
+    }
+
+    if (!spiritRoot) {
+      setMenuError("请为角色选择灵根。");
+      return;
+    }
+
+    if (remainingCreationPoints !== 0) {
+      setMenuError(`初始点数必须刚好分配完毕，当前剩余 ${remainingCreationPoints} 点。`);
+      return;
+    }
+
     const nextSessionId = createSessionId();
     if (!nextSessionId) return;
+
+    const nextWorldState = createStarterWorldState({
+      name,
+      sect,
+      spiritRoot,
+      maxHp: characterProfile.maxHp,
+      maxQi: characterProfile.maxQi,
+    });
+
+    setMenuBusy(true);
+    setMenuError(null);
+
+    try {
+      await persistWorldState(nextSessionId, nextWorldState);
+    } catch (err) {
+      setMenuBusy(false);
+      setMenuError(err instanceof Error ? err.message : "创建新游戏失败");
+      return;
+    }
 
     setStoredSessionId(nextSessionId);
     appliedWorldToolCallsRef.current.clear();
     setSessionId(nextSessionId);
     setMessages([]);
-    setWorldState(starterWorldState);
+    setWorldState(nextWorldState);
     setInput("");
     setActiveSlotIndex(1);
     setSaveSlots(emptySaveSlots);
     setBootError(null);
+    setHistoryLoaded(true);
+    setWorldLoaded(true);
     setMenuMode("root");
     setMenuOpen(false);
+    setMenuBusy(false);
   };
 
   const loadMenuSave = async (targetSessionId: string, slotIndex: number) => {
@@ -647,7 +715,9 @@ export default function Home() {
             <p className="main-menu-lede">
               {menuMode === "root"
                 ? "选择一条路。可以自此开新局，也可以从旧日存档续上因果。"
-                : "从已有存档中择一卷入局。读取后会回到该会话对应的时间点。"}
+                : menuMode === "load"
+                  ? "从已有存档中择一卷入局。读取后会回到该会话对应的时间点。"
+                  : "先定下姓名、门庭与灵根，再把初始点数分到气血和灵力上，这一局才会真正落地。"}
             </p>
 
             {menuMode === "root" ? (
@@ -669,7 +739,7 @@ export default function Home() {
                   </button>
                 )}
               </div>
-            ) : (
+            ) : menuMode === "load" ? (
               <div className="main-menu-load-section">
                 <div className="main-menu-load-head">
                   <p className="save-meta">
@@ -708,6 +778,122 @@ export default function Home() {
                   ))}
                 </div>
               </div>
+            ) : (
+              <form
+                className="character-create-form"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  void confirmNewGame();
+                }}
+              >
+                <div className="character-create-grid">
+                  <label className="field">
+                    <span>角色姓名</span>
+                    <input
+                      value={characterProfile.name}
+                      onChange={(e) => setCharacterProfile((current) => ({ ...current, name: e.target.value }))}
+                      placeholder="例如：叶惊鸿"
+                      disabled={menuBusy}
+                    />
+                  </label>
+                  <label className="field">
+                    <span>出身或门派</span>
+                    <input
+                      value={characterProfile.sect}
+                      onChange={(e) => setCharacterProfile((current) => ({ ...current, sect: e.target.value }))}
+                      placeholder="例如：青云宗外门弟子"
+                      disabled={menuBusy}
+                    />
+                  </label>
+                  <label className="field field-full">
+                    <span>灵根</span>
+                    <select
+                      value={characterProfile.spiritRoot}
+                      onChange={(e) =>
+                        setCharacterProfile((current) => ({ ...current, spiritRoot: e.target.value }))
+                      }
+                      disabled={menuBusy}
+                    >
+                      {characterCreationSpiritRoots.map((option) => (
+                        <option key={option} value={option}>
+                          {option}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                </div>
+
+                <section className="character-stat-panel">
+                  <div className="character-stat-head">
+                    <div>
+                      <p className="eyebrow">初始加点</p>
+                      <strong>总计 {CHARACTER_CREATION_TOTAL_POINTS} 点</strong>
+                    </div>
+                    <span className={remainingCreationPoints === 0 ? "character-points-ok" : "character-points-left"}>
+                      {remainingCreationPoints === 0
+                        ? "点数已分配完毕"
+                        : `剩余 ${remainingCreationPoints} 点待分配`}
+                    </span>
+                  </div>
+
+                  <div className="character-stat-grid">
+                    <label className="field">
+                      <span>气血上限</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={CHARACTER_CREATION_TOTAL_POINTS - 1}
+                        value={characterProfile.maxHp}
+                        onChange={(e) =>
+                          setCharacterProfile((current) => ({
+                            ...current,
+                            maxHp: Number(e.target.value) || 0,
+                          }))
+                        }
+                        disabled={menuBusy}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>灵力上限</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={CHARACTER_CREATION_TOTAL_POINTS - 1}
+                        value={characterProfile.maxQi}
+                        onChange={(e) =>
+                          setCharacterProfile((current) => ({
+                            ...current,
+                            maxQi: Number(e.target.value) || 0,
+                          }))
+                        }
+                        disabled={menuBusy}
+                      />
+                    </label>
+                  </div>
+                  <p className="save-meta">
+                    建议气血与灵力至少各保留 12 点，否则开局容错会很低。
+                  </p>
+                </section>
+
+                {menuError && <p className="chat-error">{menuError}</p>}
+
+                <div className="character-create-actions">
+                  <button type="submit" className="button primary main-menu-button" disabled={menuBusy}>
+                    {menuBusy ? "开局中……" : "确认开局"}
+                  </button>
+                  <button
+                    type="button"
+                    className="button main-menu-button"
+                    onClick={() => {
+                      setMenuError(null);
+                      setMenuMode("root");
+                    }}
+                    disabled={menuBusy}
+                  >
+                    返回
+                  </button>
+                </div>
+              </form>
             )}
           </div>
         </section>

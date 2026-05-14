@@ -107,6 +107,59 @@ textarea {
   gap: 12px;
 }
 
+.character-create-form {
+  display: grid;
+  gap: 16px;
+}
+
+.character-create-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.character-stat-panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(240, 193, 110, 0.16);
+  background: rgba(240, 193, 110, 0.05);
+}
+
+.character-stat-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+
+.character-stat-head strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 1rem;
+}
+
+.character-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.character-points-left,
+.character-points-ok {
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 0.8rem;
+}
+
+.character-points-left {
+  color: #f2c36b;
+}
+
+.character-points-ok {
+  color: #9ed39e;
+}
+
 .main-menu-button {
   min-height: 56px;
   justify-content: center;
@@ -521,8 +574,28 @@ textarea {
   border-color: rgba(240, 193, 110, 0.5);
 }
 
+.field select {
+  width: 100%;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 14px;
+  outline: none;
+  transition: border-color 180ms ease;
+}
+
+.field select:focus {
+  border-color: rgba(240, 193, 110, 0.5);
+}
+
 .field-full {
   grid-column: 1 / -1;
+}
+
+.character-create-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
 }
 
 .config-actions {
@@ -721,6 +794,11 @@ textarea {
   .main-menu-save-card {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .character-create-grid,
+  .character-stat-grid {
+    grid-template-columns: 1fr;
   }
 
   .chat-main {

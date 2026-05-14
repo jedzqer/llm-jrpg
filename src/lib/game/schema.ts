@@ -92,6 +92,29 @@ export type CombatState = {
   outcome: CombatOutcome;
 };
 
+export type CharacterCreationProfile = {
+  name: string;
+  sect: string;
+  spiritRoot: string;
+  maxHp: number;
+  maxQi: number;
+};
+
+export const CHARACTER_CREATION_TOTAL_POINTS = 36;
+export const CHARACTER_CREATION_MIN_HP = 12;
+export const CHARACTER_CREATION_MIN_QI = 12;
+export const characterCreationSpiritRoots = [
+  "金灵根",
+  "木灵根",
+  "水灵根",
+  "火灵根",
+  "土灵根",
+  "风灵根",
+  "雷灵根",
+  "双灵根",
+  "三灵根",
+] as const;
+
 const playerSkills: Skill[] = [
   {
     id: "qingyun-jianjue",
@@ -125,21 +148,21 @@ export const starterWorldTime: WorldTime = {
   clock: "04:15",
 };
 
-export const starterWorldState: WorldState = {
+const baseStarterWorldState: WorldState = {
   era: "灵气复苏第三百年，九州列国林立，正邪仙门对峙。",
   location: "青云宗·外门",
   scene: "演武场试炼初日，夜雨初霁，青石泛着湿光。",
   time: starterWorldTime,
   player: {
-    name: "沈惊蛰",
-    realm: "炼气三层",
-    sect: "青云宗外门弟子",
-    spiritRoot: "三灵根（水、木、雷）",
-    hp: 20,
-    maxHp: 20,
-    qi: 18,
-    maxQi: 18,
-    inventory: ["下品灵石×3", "回气丹×1", "青铜铃（来历不明）"],
+    name: "无名修士",
+    realm: "炼气一层",
+    sect: "未入宗散修",
+    spiritRoot: "灵根未定",
+    hp: CHARACTER_CREATION_MIN_HP,
+    maxHp: CHARACTER_CREATION_MIN_HP,
+    qi: CHARACTER_CREATION_MIN_QI,
+    maxQi: CHARACTER_CREATION_MIN_QI,
+    inventory: ["下品灵石×2", "回气散×1", "外门木牌"],
     skills: playerSkills,
   },
   activeNpc: {
@@ -172,6 +195,43 @@ export const starterWorldState: WorldState = {
     objective: "在林挽玉执事主持的首轮比试中立足，争取下月宗门任务的名额。",
   },
 };
+
+export const defaultCharacterCreationProfile: CharacterCreationProfile = {
+  name: "",
+  sect: "青云宗外门弟子",
+  spiritRoot: "双灵根",
+  maxHp: 18,
+  maxQi: 18,
+};
+
+export function createStarterWorldState(profile: CharacterCreationProfile): WorldState {
+  return {
+    ...structuredClone(baseStarterWorldState),
+    player: {
+      ...structuredClone(baseStarterWorldState.player),
+      name: profile.name.trim(),
+      sect: profile.sect.trim(),
+      spiritRoot: profile.spiritRoot.trim(),
+      hp: profile.maxHp,
+      maxHp: profile.maxHp,
+      qi: profile.maxQi,
+      maxQi: profile.maxQi,
+    },
+    activeNpc: {
+      ...structuredClone(baseStarterWorldState.activeNpc),
+      motive: `甄选可造之材，顺便观察新入门的 ${profile.name.trim()} 是否值得进一步留意。`,
+    },
+    activeQuest: {
+      ...structuredClone(baseStarterWorldState.activeQuest),
+      objective: `以新弟子 ${profile.name.trim()} 的身份通过首轮试炼，在青云宗外门站稳脚跟。`,
+    },
+  };
+}
+
+export const starterWorldState: WorldState = createStarterWorldState({
+  ...defaultCharacterCreationProfile,
+  name: "沈惊蛰",
+});
 
 export function formatWorldTime(time: WorldTime) {
   return `第 ${time.day} 日 · ${time.phase} · ${time.clock}`;
