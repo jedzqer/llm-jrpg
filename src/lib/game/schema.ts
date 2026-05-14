@@ -1,3 +1,24 @@
+export type ItemUsageContext = "panel" | "combat" | "passive";
+
+export type ItemEffect = {
+  stat: "hp" | "qi" | "maxHp" | "maxQi";
+  delta: number;
+};
+
+export type ItemDef = {
+  id: string;
+  name: string;
+  description: string;
+  usage: ItemUsageContext;
+  effects: ItemEffect[];
+  consumable: boolean;
+};
+
+export type InventoryEntry = {
+  itemId: string;
+  quantity: number;
+};
+
 export type SkillKind = "attack" | "defend" | "heal";
 
 export type Skill = {
@@ -14,11 +35,12 @@ export type PlayerState = {
   realm: string;
   sect: string;
   spiritRoot: string;
+  backstory: string;
   hp: number;
   maxHp: number;
   qi: number;
   maxQi: number;
-  inventory: string[];
+  inventory: InventoryEntry[];
   skills: Skill[];
 };
 
@@ -60,6 +82,7 @@ export type WorldState = {
   player: PlayerState;
   activeNpc: NpcState;
   activeQuest: QuestState;
+  itemRegistry: ItemDef[];
 };
 
 export type CombatType = "spar" | "lethal";
@@ -96,6 +119,7 @@ export type CharacterCreationProfile = {
   name: string;
   sect: string;
   spiritRoot: string;
+  backstory: string;
   maxHp: number;
   maxQi: number;
 };
@@ -114,6 +138,39 @@ export const characterCreationSpiritRoots = [
   "双灵根",
   "三灵根",
 ] as const;
+
+export const starterItems: ItemDef[] = [
+  {
+    id: "xiapin-lingshi",
+    name: "下品灵石",
+    description: "蕴含微薄灵气的矿石，可用于恢复灵力。",
+    usage: "panel",
+    effects: [{ stat: "qi", delta: 5 }],
+    consumable: true,
+  },
+  {
+    id: "huiqi-san",
+    name: "回气散",
+    description: "散修常备丹药，服后可缓缓恢复灵力。",
+    usage: "panel",
+    effects: [{ stat: "qi", delta: 8 }],
+    consumable: true,
+  },
+  {
+    id: "waimen-mupai",
+    name: "外门木牌",
+    description: "青云宗外门弟子身份凭证。",
+    usage: "passive",
+    effects: [],
+    consumable: false,
+  },
+];
+
+const starterInventory: InventoryEntry[] = [
+  { itemId: "xiapin-lingshi", quantity: 2 },
+  { itemId: "huiqi-san", quantity: 1 },
+  { itemId: "waimen-mupai", quantity: 1 },
+];
 
 const playerSkills: Skill[] = [
   {
@@ -158,11 +215,12 @@ const baseStarterWorldState: WorldState = {
     realm: "炼气一层",
     sect: "未入宗散修",
     spiritRoot: "灵根未定",
+    backstory: "",
     hp: CHARACTER_CREATION_MIN_HP,
     maxHp: CHARACTER_CREATION_MIN_HP,
     qi: CHARACTER_CREATION_MIN_QI,
     maxQi: CHARACTER_CREATION_MIN_QI,
-    inventory: ["下品灵石×2", "回气散×1", "外门木牌"],
+    inventory: [],
     skills: playerSkills,
   },
   activeNpc: {
@@ -176,7 +234,7 @@ const baseStarterWorldState: WorldState = {
     maxHp: 60,
     qi: 50,
     maxQi: 50,
-    inventory: ["青锋长剑", "定神符×3"],
+    inventory: [],
     skills: [
       {
         id: "linwanyu-qingfeng",
@@ -194,12 +252,14 @@ const baseStarterWorldState: WorldState = {
     stage: "开场",
     objective: "在林挽玉执事主持的首轮比试中立足，争取下月宗门任务的名额。",
   },
+  itemRegistry: [],
 };
 
 export const defaultCharacterCreationProfile: CharacterCreationProfile = {
   name: "",
   sect: "青云宗外门弟子",
   spiritRoot: "双灵根",
+  backstory: "",
   maxHp: 18,
   maxQi: 18,
 };
@@ -212,6 +272,7 @@ export function createStarterWorldState(profile: CharacterCreationProfile): Worl
       name: profile.name.trim(),
       sect: profile.sect.trim(),
       spiritRoot: profile.spiritRoot.trim(),
+      backstory: profile.backstory.trim(),
       hp: profile.maxHp,
       maxHp: profile.maxHp,
       qi: profile.maxQi,
@@ -231,6 +292,7 @@ export function createStarterWorldState(profile: CharacterCreationProfile): Worl
 export const starterWorldState: WorldState = createStarterWorldState({
   ...defaultCharacterCreationProfile,
   name: "沈惊蛰",
+  backstory: "自幼在山野间长大的孤儿，偶然拾得一枚青铜铃，铃声引来青云宗外门执事。",
 });
 
 export function formatWorldTime(time: WorldTime) {
@@ -242,6 +304,19 @@ export function normalizeWorldState(worldState?: Partial<WorldState> | null): Wo
 
   if (!worldState) {
     return base;
+  }
+
+  const rawInventory = worldState.player?.inventory;
+  let playerInventory: InventoryEntry[];
+  if (!rawInventory) {
+    playerInventory = base.player.inventory;
+  } else if (rawInventory.length > 0 && typeof (rawInventory as unknown[])[0] === "string") {
+    playerInventory = (rawInventory as unknown as string[]).map((s) => ({
+      itemId: s.replace(/×\d+$/, "").trim(),
+      quantity: Number(s.match(/×(\d+)$/)?.[1] ?? 1),
+    }));
+  } else {
+    playerInventory = rawInventory as InventoryEntry[];
   }
 
   return {
@@ -256,7 +331,8 @@ export function normalizeWorldState(worldState?: Partial<WorldState> | null): Wo
     player: {
       ...base.player,
       ...worldState.player,
-      inventory: worldState.player?.inventory ?? base.player.inventory,
+      backstory: worldState.player?.backstory ?? base.player.backstory,
+      inventory: playerInventory,
       skills: worldState.player?.skills ?? base.player.skills,
     },
     activeNpc: {
@@ -269,5 +345,6 @@ export function normalizeWorldState(worldState?: Partial<WorldState> | null): Wo
       ...base.activeQuest,
       ...worldState.activeQuest,
     },
+    itemRegistry: worldState.itemRegistry ?? base.itemRegistry,
   };
 }

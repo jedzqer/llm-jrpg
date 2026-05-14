@@ -1,7 +1,7 @@
 import { createOpenAI } from "@ai-sdk/openai";
 import { convertToModelMessages, stepCountIs, streamText, type UIMessage } from "ai";
 import { NextResponse } from "next/server";
-import { buildSystemPrompt } from "@/lib/ai/prompts";
+import { buildSystemPrompt, buildInitializationPrompt } from "@/lib/ai/prompts";
 import { normalizeChatMessages } from "@/lib/chat/messages";
 import { gameTools } from "@/lib/ai/tools";
 import {
@@ -58,6 +58,16 @@ export async function POST(req: Request) {
 
   const normalizedMessages = normalizeChatMessages(messages);
   const worldState = loadWorldState(sessionId);
+
+  const isInitialization = normalizedMessages.length === 1
+    && normalizedMessages[0].role === "user"
+    && normalizedMessages[0].parts.some(
+      (p) => p.type === "text" && p.text.startsWith("[系统] 角色初始化"),
+    );
+
+  const systemPrompt = isInitialization
+    ? buildInitializationPrompt(worldState)
+    : buildSystemPrompt(worldState);
 
   // reasoning_content values from prior assistant UI messages, one per message in order.
   // DeepSeek thinking mode is strict about this field during tool-call continuations:
@@ -152,7 +162,7 @@ export async function POST(req: Request) {
 
   const result = streamText({
     model: provider.chat(modelId),
-    system: buildSystemPrompt(worldState),
+    system: systemPrompt,
     messages: await convertToModelMessages(normalizedMessages),
     stopWhen: stepCountIs(2),
     tools: gameTools,

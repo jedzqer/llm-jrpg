@@ -60,6 +60,29 @@ export const worldStateChangeInputSchema = z
 
 export type WorldStateChangeInput = z.infer<typeof worldStateChangeInputSchema>;
 
+const itemEffectSchema = z.object({
+  stat: z.enum(["hp", "qi", "maxHp", "maxQi"]),
+  delta: z.number(),
+});
+
+const itemDefSchema = z.object({
+  id: z.string().describe("道具唯一ID，同一种道具必须使用相同ID。"),
+  name: z.string(),
+  description: z.string(),
+  usage: z.enum(["panel", "combat", "passive"]).describe(
+    "panel: 可在背包界面直接使用；combat: 仅战斗中可用；passive: 被动效果，不可主动使用。",
+  ),
+  effects: z.array(itemEffectSchema).describe("使用后的数值变化列表。panel 和 combat 类型必须提供。"),
+  consumable: z.boolean().describe("使用后是否消耗。"),
+});
+
+export const giveItemInputSchema = z.object({
+  item: itemDefSchema,
+  quantity: z.number().int().positive().describe("获得的数量"),
+});
+
+export type GiveItemInput = z.infer<typeof giveItemInputSchema>;
+
 export const gameTools = {
   updateWorldState: tool({
     description:
@@ -106,5 +129,16 @@ export const gameTools = {
       }),
     }),
     // 无 execute → 客户端托管，由前端 addToolOutput 回传结果
+  }),
+  giveItem: tool({
+    description:
+      "当叙事中玩家获得道具时调用。传入道具的完整定义和数量。同一种道具多次赋予时必须使用相同的 id 和参数。",
+    inputSchema: giveItemInputSchema,
+    outputSchema: z.object({
+      accepted: z.boolean(),
+      summary: z.string().describe("道具入库结果摘要。"),
+      corrected: z.boolean().describe("是否因参数冲突而修正了道具定义。"),
+    }),
+    // 无 execute → 客户端托管
   }),
 };

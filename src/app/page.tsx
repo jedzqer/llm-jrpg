@@ -15,7 +15,7 @@ import {
   getOrCreateSessionId,
   setStoredSessionId,
 } from "@/lib/chat/session";
-import { gameTools, type WorldStateChangeInput } from "@/lib/ai/tools";
+import { gameTools, type WorldStateChangeInput, type GiveItemInput } from "@/lib/ai/tools";
 import {
   CHARACTER_CREATION_TOTAL_POINTS,
   characterCreationSpiritRoots,
@@ -25,6 +25,7 @@ import {
   normalizeWorldState,
   starterWorldState,
   type CharacterCreationProfile,
+  type ItemDef,
   type WorldState,
 } from "@/lib/game/schema";
 
@@ -52,6 +53,22 @@ async function persistWorldState(sessionId: string, worldState: WorldState) {
     const data = (await res.json()) as { error?: string };
     throw new Error(data.error || "保存世界状态失败");
   }
+}
+
+function reconcileItem(
+  registry: ItemDef[],
+  incoming: GiveItemInput["item"],
+): { item: ItemDef; corrected: boolean } {
+  const existing = registry.find((d) => d.id === incoming.id);
+  if (!existing) {
+    return { item: incoming as ItemDef, corrected: false };
+  }
+  const same =
+    existing.name === incoming.name &&
+    existing.usage === incoming.usage &&
+    existing.consumable === incoming.consumable &&
+    JSON.stringify(existing.effects) === JSON.stringify(incoming.effects);
+  return { item: existing, corrected: !same };
 }
 
 function applyWorldStateChange(worldState: WorldState, change: WorldStateChangeInput): WorldState {
@@ -172,7 +189,9 @@ export default function Home() {
   const [apiKey, setApiKey] = useState("");
   const [hasSavedApiKey, setHasSavedApiKey] = useState(false);
   const [characterProfile, setCharacterProfile] = useState<CharacterCreationProfile>(defaultCharacterCreationProfile);
+  const [pendingInit, setPendingInit] = useState(false);
   const appliedWorldToolCallsRef = useRef(new Set<string>());
+  const appliedGiveItemCallsRef = useRef(new Set<string>());
 
   const { messages, setMessages, sendMessage, status, error, addToolOutput } =
     useChat<GameUIMessage>({
@@ -322,6 +341,12 @@ export default function Home() {
   }, [messages]);
 
   useEffect(() => {
+    if (!pendingInit || !historyLoaded || !worldLoaded || !sessionId) return;
+    setPendingInit(false);
+    sendMessage({ text: "[系统] 角色初始化" });
+  }, [pendingInit, historyLoaded, worldLoaded, sessionId, sendMessage]);
+
+  useEffect(() => {
     if (!sessionId) return;
 
     const pending = messages.flatMap((message) =>
@@ -375,6 +400,70 @@ export default function Home() {
     });
   }, [messages, sessionId, worldState, addToolOutput]);
 
+  useEffect(() => {
+    if (!sessionId) return;
+
+    const pending = messages.flatMap((message) =>
+      message.parts.flatMap((part) => {
+        if (part.type !== "tool-giveItem" || part.state !== "input-available") {
+          return [];
+        }
+        if (appliedGiveItemCallsRef.current.has(part.toolCallId)) {
+          return [];
+        }
+        return [{ toolCallId: part.toolCallId, input: part.input as GiveItemInput }];
+      }),
+    );
+
+    if (pending.length === 0) return;
+
+    let nextWorldState = worldState;
+    const outputs = pending.map(({ toolCallId, input }) => {
+      appliedGiveItemCallsRef.current.add(toolCallId);
+
+      const { item: resolvedItem, corrected } = reconcileItem(
+        nextWorldState.itemRegistry,
+        input.item,
+      );
+
+      const newRegistry = nextWorldState.itemRegistry.find((d) => d.id === resolvedItem.id)
+        ? nextWorldState.itemRegistry
+        : [...nextWorldState.itemRegistry, resolvedItem];
+
+      const existingEntry = nextWorldState.player.inventory.find(
+        (e) => e.itemId === resolvedItem.id,
+      );
+      const newInventory = existingEntry
+        ? nextWorldState.player.inventory.map((e) =>
+            e.itemId === resolvedItem.id
+              ? { ...e, quantity: e.quantity + input.quantity }
+              : e,
+          )
+        : [...nextWorldState.player.inventory, { itemId: resolvedItem.id, quantity: input.quantity }];
+
+      nextWorldState = {
+        ...nextWorldState,
+        itemRegistry: newRegistry,
+        player: { ...nextWorldState.player, inventory: newInventory },
+      };
+
+      const summary = corrected
+        ? `获得「${resolvedItem.name}」×${input.quantity}（参数已按已有定义修正）`
+        : `获得「${resolvedItem.name}」×${input.quantity}`;
+
+      return { toolCallId, output: { accepted: true, summary, corrected } };
+    });
+
+    setWorldState(nextWorldState);
+    for (const { toolCallId, output } of outputs) {
+      addToolOutput({ tool: "giveItem", toolCallId, output });
+    }
+
+    void persistWorldState(sessionId, nextWorldState).catch((err) => {
+      setBootError(err instanceof Error ? err.message : "保存世界状态失败");
+    });
+  }, [messages, sessionId, worldState, addToolOutput]);
+
   const busy = status === "streaming" || status === "submitted";
   const playerDead = worldState.player.hp <= 0;
   const activeSlot = saveSlots.find((slot) => slot.slotIndex === activeSlotIndex);
@@ -393,6 +482,53 @@ export default function Home() {
     if (!text || busy || !sessionId || !chatReady) return;
     sendMessage({ text });
     setInput("");
+  };
+
+  const handleUseItem = (itemId: string) => {
+    if (busy || !sessionId || !chatReady) return;
+
+    const entry = worldState.player.inventory.find((e) => e.itemId === itemId);
+    const def = worldState.itemRegistry.find((d) => d.id === itemId);
+    if (!entry || !def || def.usage !== "panel") return;
+
+    let nextPlayer = { ...worldState.player };
+    const effectParts: string[] = [];
+
+    for (const effect of def.effects) {
+      const prev = nextPlayer[effect.stat];
+      let next = prev + effect.delta;
+      if (effect.stat === "hp") next = Math.min(next, nextPlayer.maxHp);
+      if (effect.stat === "qi") next = Math.min(next, nextPlayer.maxQi);
+      next = Math.max(next, 0);
+      nextPlayer = { ...nextPlayer, [effect.stat]: next };
+
+      const statLabel = { hp: "气血", qi: "灵力", maxHp: "气血上限", maxQi: "灵力上限" }[effect.stat];
+      const sign = effect.delta > 0 ? "+" : "";
+      effectParts.push(`${statLabel} ${sign}${effect.delta}`);
+    }
+
+    if (def.consumable) {
+      const newQty = entry.quantity - 1;
+      nextPlayer = {
+        ...nextPlayer,
+        inventory: newQty > 0
+          ? nextPlayer.inventory.map((e) =>
+              e.itemId === itemId ? { ...e, quantity: newQty } : e,
+            )
+          : nextPlayer.inventory.filter((e) => e.itemId !== itemId),
+      };
+    }
+
+    const nextWorldState = { ...worldState, player: nextPlayer };
+    setWorldState(nextWorldState);
+
+    void persistWorldState(sessionId, nextWorldState).catch((err) => {
+      setBootError(err instanceof Error ? err.message : "保存世界状态失败");
+    });
+
+    const effectStr = effectParts.join("，");
+    const msg = `[系统] 你使用了「${def.name}」。效果：${effectStr}。`;
+    sendMessage({ text: msg });
   };
 
   const refreshGlobalSaves = async () => {
@@ -631,6 +767,7 @@ export default function Home() {
       name,
       sect,
       spiritRoot,
+      backstory: characterProfile.backstory,
       maxHp: characterProfile.maxHp,
       maxQi: characterProfile.maxQi,
     });
@@ -648,8 +785,8 @@ export default function Home() {
 
     setStoredSessionId(nextSessionId);
     appliedWorldToolCallsRef.current.clear();
+    appliedGiveItemCallsRef.current.clear();
     setSessionId(nextSessionId);
-    setMessages([]);
     setWorldState(nextWorldState);
     setInput("");
     setActiveSlotIndex(1);
@@ -660,6 +797,7 @@ export default function Home() {
     setMenuMode("root");
     setMenuOpen(false);
     setMenuBusy(false);
+    setPendingInit(true);
   };
 
   const loadMenuSave = async (targetSessionId: string, slotIndex: number) => {
@@ -689,6 +827,7 @@ export default function Home() {
 
       setStoredSessionId(targetSessionId);
       appliedWorldToolCallsRef.current.clear();
+      appliedGiveItemCallsRef.current.clear();
       setSessionId(targetSessionId);
       setMessages(data.messages);
       setWorldState(normalizeWorldState(data.worldState));
@@ -820,6 +959,18 @@ export default function Home() {
                         </option>
                       ))}
                     </select>
+                  </label>
+                  <label className="field field-full">
+                    <span>出身经历</span>
+                    <textarea
+                      value={characterProfile.backstory}
+                      onChange={(e) =>
+                        setCharacterProfile((current) => ({ ...current, backstory: e.target.value }))
+                      }
+                      placeholder="例如：世家子弟，自幼修习剑道；或：孤儿流浪，偶得残卷入道……"
+                      rows={3}
+                      disabled={menuBusy}
+                    />
                   </label>
                 </div>
 
@@ -959,11 +1110,24 @@ export default function Home() {
               <span className="eyebrow">随身物品</span>
             </div>
             <ul className="token-list">
-              {player.inventory.map((item) => (
-                <li key={item} className="token-item">
-                  {item}
-                </li>
-              ))}
+              {player.inventory.map((entry) => {
+                const def = worldState.itemRegistry.find((d) => d.id === entry.itemId);
+                const label = def ? `${def.name}×${entry.quantity}` : `${entry.itemId}×${entry.quantity}`;
+                const canUse = def?.usage === "panel" && !busy;
+                return (
+                  <li key={entry.itemId} className="token-item" title={def?.description}>
+                    <span>{label}</span>
+                    {canUse && (
+                      <button
+                        className="item-use-btn"
+                        onClick={() => handleUseItem(entry.itemId)}
+                      >
+                        使用
+                      </button>
+                    )}
+                  </li>
+                );
+              })}
             </ul>
           </section>
 
@@ -1155,7 +1319,13 @@ export default function Home() {
           {messages.length === 0 && (
             <p className="chat-empty">先开口说点什么，或者做点什么。比如「上前行礼，通报姓名」。</p>
           )}
-          {messages.map((m) => (
+          {messages.map((m) => {
+            const isSystemMsg = m.role === "user" && m.parts.some(
+              (p) => p.type === "text" && p.text.startsWith("[系统]"),
+            );
+            if (isSystemMsg) return null;
+
+            return (
             <article key={m.id} className={`chat-turn ${m.role}`}>
               <div className="chat-turn-head">
                 <span className="chat-role">{m.role === "user" ? "你" : "叙事"}</span>
@@ -1220,6 +1390,18 @@ export default function Home() {
                     }
                   }
 
+                  if (part.type === "tool-giveItem") {
+                    if (part.state === "output-available") {
+                      const out = part.output as { summary: string };
+                      return (
+                        <p key={`${m.id}-${i}`} className="item-gained">
+                          {out.summary}
+                        </p>
+                      );
+                    }
+                    return null;
+                  }
+
                   return null;
                 })}
               </div>
@@ -1237,7 +1419,8 @@ export default function Home() {
                 </div>
               )}
             </article>
-          ))}
+          );
+          })}
           {error && <p className="chat-error">出了点岔子：{error.message}</p>}
         </section>
 
