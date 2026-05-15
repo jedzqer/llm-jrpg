@@ -16,11 +16,12 @@ No test runner is configured yet.
 
 ## Environment
 
-Copy `.env.example` to `.env.local` and fill in:
+Copy `.env.example` to `.env.local`. LLM provider config (API key, model, base URL) is managed at runtime via the in-app settings panel and stored in SQLite — no env vars needed for AI.
+
+Optional env var:
 
 ```
-OPENAI_COMPATIBLE_API_KEY=...
-OPENAI_MODEL=gpt-4o-mini
+SQLITE_DATABASE_PATH=./data/app.db   # default shown; override to change DB location
 ```
 
 ## Architecture
