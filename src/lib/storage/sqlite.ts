@@ -12,6 +12,21 @@ import {
 const defaultDatabasePath = join(process.cwd(), "data", "app.db");
 const databasePath = resolve(defaultDatabasePath);
 export const SAVE_SLOT_COUNT = 10;
+export const WORLD_STATE_SCHEMA_VERSION = 1;
+
+function migrateWorldStateJson(raw: Record<string, unknown>): Record<string, unknown> {
+  const version = typeof raw.schemaVersion === "number" ? raw.schemaVersion : 0;
+  if (version < 1) {
+    // v0 → v1: no structural changes; placeholder for future field backfills
+  }
+  return raw;
+}
+
+function parseWorldStateJson(json: string): WorldState {
+  const raw = JSON.parse(json) as Record<string, unknown>;
+  const migrated = migrateWorldStateJson(raw);
+  return normalizeWorldState(migrated as Partial<WorldState>);
+}
 
 mkdirSync(dirname(databasePath), { recursive: true });
 
@@ -272,12 +287,12 @@ export function loadWorldState(sessionId: string): WorldState | null {
   ensureChatSession(sessionId);
   const row = selectWorldStateStatement.get(sessionId) as WorldStateRow | undefined;
   if (!row) return null;
-  return normalizeWorldState(JSON.parse(row.state_json) as WorldState);
+  return parseWorldStateJson(row.state_json);
 }
 
 export function saveWorldState(sessionId: string, worldState: WorldState) {
   ensureSessionStatement.run(sessionId);
-  upsertWorldStateStatement.run(sessionId, JSON.stringify(normalizeWorldState(worldState)));
+  upsertWorldStateStatement.run(sessionId, JSON.stringify({ schemaVersion: WORLD_STATE_SCHEMA_VERSION, ...normalizeWorldState(worldState) }));
   touchSessionStatement.run(sessionId);
 }
 
@@ -347,7 +362,7 @@ function buildSaveSlotSummary(slotIndex: number, row?: SaveSlotRow): SaveSlotSum
     };
   }
 
-  const worldState = normalizeWorldState(JSON.parse(row.world_state_json) as WorldState);
+  const worldState = parseWorldStateJson(row.world_state_json);
 
   return {
     sessionId: null,
@@ -414,7 +429,7 @@ export function saveCheckpoint(
       sessionId,
       slotIndex,
       JSON.stringify(normalizedMessages),
-      JSON.stringify(normalizeWorldState(worldState)),
+      JSON.stringify({ schemaVersion: WORLD_STATE_SCHEMA_VERSION, ...normalizeWorldState(worldState) }),
     );
     touchSessionStatement.run(sessionId);
     db.exec("COMMIT");
@@ -434,7 +449,7 @@ export function loadCheckpoint(sessionId: string, slotIndex: number): Checkpoint
 
   return {
     messages: normalizeChatMessages(JSON.parse(row.messages_json) as UIMessage[]),
-    worldState: normalizeWorldState(JSON.parse(row.world_state_json) as WorldState),
+    worldState: parseWorldStateJson(row.world_state_json),
     updatedAt: row.updated_at,
   };
 }

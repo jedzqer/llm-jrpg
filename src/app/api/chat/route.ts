@@ -127,12 +127,15 @@ export async function POST(req: Request) {
       const stream = new ReadableStream<Uint8Array>({
         async start(controller) {
           const decoder = new TextDecoder();
+          let lineBuffer = "";
           try {
             while (true) {
               const { done, value } = await reader.read();
               if (done) break;
-              const text = decoder.decode(value, { stream: true });
-              for (const line of text.split("\n")) {
+              const combined = lineBuffer + decoder.decode(value, { stream: true });
+              const lines = combined.split("\n");
+              lineBuffer = lines.pop() ?? "";
+              for (const line of lines) {
                 if (line.startsWith("data: ") && line !== "data: [DONE]") {
                   try {
                     const data = JSON.parse(line.slice(6)) as {
