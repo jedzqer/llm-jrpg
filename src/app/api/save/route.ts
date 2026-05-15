@@ -33,7 +33,12 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "sessionId and slotIndex are required" }, { status: 400 });
   }
 
-  saveCheckpoint(sessionId, slotIndex, loadChatMessages(sessionId), loadWorldState(sessionId));
+  const worldState = loadWorldState(sessionId);
+  if (!worldState) {
+    return NextResponse.json({ error: "世界状态未初始化，无法存档。" }, { status: 400 });
+  }
+
+  saveCheckpoint(sessionId, slotIndex, loadChatMessages(sessionId), worldState);
 
   return NextResponse.json({
     ok: true,

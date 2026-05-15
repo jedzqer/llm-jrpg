@@ -6,7 +6,6 @@ import { normalizeChatMessages } from "@/lib/chat/messages";
 import {
   formatWorldTime,
   normalizeWorldState,
-  starterWorldState,
   type WorldState,
 } from "@/lib/game/schema";
 
@@ -257,11 +256,7 @@ function migrateSaveSlotsTableIfNeeded() {
 migrateSaveSlotsTableIfNeeded();
 
 export function ensureChatSession(sessionId: string) {
-  const exists = chatSessionExists(sessionId);
   ensureSessionStatement.run(sessionId);
-  if (!exists) {
-    upsertWorldStateStatement.run(sessionId, JSON.stringify(starterWorldState));
-  }
 }
 
 export function chatSessionExists(sessionId: string) {
@@ -273,12 +268,10 @@ export function loadChatMessages(sessionId: string): UIMessage[] {
   return normalizeChatMessages(rows.map((row) => JSON.parse(row.message_json) as UIMessage));
 }
 
-export function loadWorldState(sessionId: string): WorldState {
+export function loadWorldState(sessionId: string): WorldState | null {
   ensureChatSession(sessionId);
   const row = selectWorldStateStatement.get(sessionId) as WorldStateRow | undefined;
-  if (!row) {
-    return structuredClone(starterWorldState);
-  }
+  if (!row) return null;
   return normalizeWorldState(JSON.parse(row.state_json) as WorldState);
 }
 

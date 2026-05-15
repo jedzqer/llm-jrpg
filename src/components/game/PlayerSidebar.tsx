@@ -7,13 +7,23 @@ import {
 } from "@/lib/game/schema";
 
 type Props = {
-  player: WorldState["player"];
-  worldState: WorldState;
+  worldState: WorldState | null;
   busy: boolean;
   onUseItem: (itemId: string) => void;
 };
 
-export function PlayerSidebar({ player, worldState, busy, onUseItem }: Props) {
+export function PlayerSidebar({ worldState, busy, onUseItem }: Props) {
+  if (!worldState) {
+    return (
+      <aside className="player-sidebar">
+        <section className="player-panel">
+          <p className="chat-empty">尚未创建角色</p>
+        </section>
+      </aside>
+    );
+  }
+
+  const { player } = worldState;
   return (
     <aside className="player-sidebar">
       <section className="player-panel">

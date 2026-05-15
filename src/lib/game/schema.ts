@@ -289,62 +289,41 @@ export function createStarterWorldState(profile: CharacterCreationProfile): Worl
   };
 }
 
-export const starterWorldState: WorldState = createStarterWorldState({
-  ...defaultCharacterCreationProfile,
-  name: "沈惊蛰",
-  backstory: "自幼在山野间长大的孤儿，偶然拾得一枚青铜铃，铃声引来青云宗外门执事。",
-});
-
 export function formatWorldTime(time: WorldTime) {
   return `第 ${time.day} 日 · ${time.phase} · ${time.clock}`;
 }
 
-export function normalizeWorldState(worldState?: Partial<WorldState> | null): WorldState {
-  const base = structuredClone(starterWorldState);
-
+export function normalizeWorldState(worldState: Partial<WorldState>): WorldState {
   if (!worldState) {
-    return base;
+    throw new Error("normalizeWorldState: worldState is null or undefined");
   }
 
-  const rawInventory = worldState.player?.inventory;
+  const required = ["era", "location", "scene", "time", "player", "activeNpc", "activeQuest", "itemRegistry"] as const;
+  const missing = required.filter((k) => worldState[k] == null);
+  if (missing.length > 0) {
+    throw new Error(`normalizeWorldState: missing required fields: ${missing.join(", ")}`);
+  }
+
+  // Migrate legacy inventory format where items were stored as "itemId×N" strings
+  const rawInventory = worldState.player!.inventory;
   let playerInventory: InventoryEntry[];
-  if (!rawInventory) {
-    playerInventory = base.player.inventory;
-  } else if (rawInventory.length > 0 && typeof (rawInventory as unknown[])[0] === "string") {
+  if (rawInventory && rawInventory.length > 0 && typeof (rawInventory as unknown[])[0] === "string") {
     playerInventory = (rawInventory as unknown as string[]).map((s) => ({
       itemId: s.replace(/×\d+$/, "").trim(),
       quantity: Number(s.match(/×(\d+)$/)?.[1] ?? 1),
     }));
   } else {
-    playerInventory = rawInventory as InventoryEntry[];
+    playerInventory = (rawInventory ?? []) as InventoryEntry[];
   }
 
   return {
-    era: worldState.era ?? base.era,
-    location: worldState.location ?? base.location,
-    scene: worldState.scene ?? base.scene,
-    time: {
-      day: worldState.time?.day ?? base.time.day,
-      phase: worldState.time?.phase ?? base.time.phase,
-      clock: worldState.time?.clock ?? base.time.clock,
-    },
-    player: {
-      ...base.player,
-      ...worldState.player,
-      backstory: worldState.player?.backstory ?? base.player.backstory,
-      inventory: playerInventory,
-      skills: worldState.player?.skills ?? base.player.skills,
-    },
-    activeNpc: {
-      ...base.activeNpc,
-      ...worldState.activeNpc,
-      inventory: worldState.activeNpc?.inventory ?? base.activeNpc.inventory,
-      skills: worldState.activeNpc?.skills ?? base.activeNpc.skills,
-    },
-    activeQuest: {
-      ...base.activeQuest,
-      ...worldState.activeQuest,
-    },
-    itemRegistry: worldState.itemRegistry ?? base.itemRegistry,
+    era: worldState.era!,
+    location: worldState.location!,
+    scene: worldState.scene!,
+    time: worldState.time!,
+    player: { ...worldState.player!, inventory: playerInventory },
+    activeNpc: worldState.activeNpc!,
+    activeQuest: worldState.activeQuest!,
+    itemRegistry: worldState.itemRegistry!,
   };
 }

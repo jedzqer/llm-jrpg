@@ -22,7 +22,6 @@ import {
   createStarterWorldState,
   formatWorldTime,
   normalizeWorldState,
-  starterWorldState,
   type CharacterCreationProfile,
   type ItemDef,
   type WorldState,
@@ -122,12 +121,10 @@ export default function Home() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(true);
   const [bootError, setBootError] = useState<string | null>(null);
-  const [historyLoaded, setHistoryLoaded] = useState(false);
-  const [worldLoaded, setWorldLoaded] = useState(false);
-  const [worldState, setWorldState] = useState<WorldState>(starterWorldState);
+  const [loadPhase, setLoadPhase] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [worldState, setWorldState] = useState<WorldState | null>(null);
   const [configState, setConfigState] = useState<ConfigState>({ loaded: false, hasSavedApiKey: false, modelId: "" });
-  const [saveBusy, setSaveBusy] = useState(false);
-  const [loadBusy, setLoadBusy] = useState(false);
+  const [saveLoadStatus, setSaveLoadStatus] = useState<"idle" | "saving" | "loading">("idle");
   const [activeSlotIndex, setActiveSlotIndex] = useState(1);
   const [saveSlots, setSaveSlots] = useState<SaveStatusResponse["saveSlots"]>(emptySaveSlots);
   const [globalSaveSlots, setGlobalSaveSlots] = useState<SaveStatusResponse["saveSlots"]>([]);
@@ -166,18 +163,27 @@ export default function Home() {
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
+    let completedCount = 0;
+    let hadError = false;
+
+    setLoadPhase("loading");
+
+    const onSubTaskDone = (error?: string) => {
+      if (cancelled) return;
+      if (error) { hadError = true; setBootError(error); }
+      completedCount += 1;
+      if (completedCount === 2) setLoadPhase(hadError ? "error" : "ready");
+    };
 
     const loadHistory = async () => {
       try {
         const res = await fetch(`/api/chat?sessionId=${encodeURIComponent(sessionId)}`);
         if (!res.ok) throw new Error("加载历史对话失败");
         const data = (await res.json()) as { messages?: GameUIMessage[] };
-        if (!cancelled && Array.isArray(data.messages)) {
-          setMessages(data.messages);
-          setHistoryLoaded(true);
-        }
+        if (!cancelled && Array.isArray(data.messages)) setMessages(data.messages);
+        onSubTaskDone();
       } catch (err) {
-        if (!cancelled) { setBootError(err instanceof Error ? err.message : "加载历史对话失败"); setHistoryLoaded(true); }
+        onSubTaskDone(err instanceof Error ? err.message : "加载历史对话失败");
       }
     };
 
@@ -186,9 +192,10 @@ export default function Home() {
         const res = await fetch(`/api/world?sessionId=${encodeURIComponent(sessionId)}`);
         if (!res.ok) throw new Error("加载世界状态失败");
         const data = (await res.json()) as { worldState?: WorldState };
-        if (!cancelled && data.worldState) { setWorldState(normalizeWorldState(data.worldState)); setWorldLoaded(true); }
+        if (!cancelled && data.worldState) setWorldState(normalizeWorldState(data.worldState));
+        onSubTaskDone();
       } catch (err) {
-        if (!cancelled) { setBootError(err instanceof Error ? err.message : "加载世界状态失败"); setWorldLoaded(true); }
+        onSubTaskDone(err instanceof Error ? err.message : "加载世界状态失败");
       }
     };
 
@@ -211,34 +218,46 @@ export default function Home() {
 
   // Auto-send init message after new game creation
   useEffect(() => {
-    if (!pendingInitRef.current || !historyLoaded || !worldLoaded || !sessionId) return;
+    if (!pendingInitRef.current || loadPhase !== "ready" || !sessionId) return;
     pendingInitRef.current = false;
     sendMessage({ text: "[系统] 角色初始化" });
-  }, [historyLoaded, worldLoaded, sessionId, sendMessage]);
+  }, [loadPhase, sessionId, sendMessage]);
 
   // PLACEHOLDER_EFFECTS
 
-  // Process updateWorldState tool calls
+  // Process tool calls — single effect chains nextWorldState through both passes to prevent overwrite race
   useEffect(() => {
     if (!sessionId) return;
-    const pending = messages.flatMap((message) =>
+
+    const pendingWorldUpdates = messages.flatMap((message) =>
       message.parts.flatMap((part) => {
         if (part.type !== "tool-updateWorldState" || part.state !== "input-available") return [];
         if (appliedWorldToolCallsRef.current.has(part.toolCallId)) return [];
         return [{ toolCallId: part.toolCallId, input: part.input as WorldStateChangeInput }];
       }),
     );
-    if (pending.length === 0) return;
+
+    const pendingGiveItems = messages.flatMap((message) =>
+      message.parts.flatMap((part) => {
+        if (part.type !== "tool-giveItem" || part.state !== "input-available") return [];
+        if (appliedGiveItemCallsRef.current.has(part.toolCallId)) return [];
+        return [{ toolCallId: part.toolCallId, input: part.input as GiveItemInput }];
+      }),
+    );
+
+    if (pendingWorldUpdates.length === 0 && pendingGiveItems.length === 0) return;
+    if (!worldState) return;
 
     let nextWorldState = worldState;
-    const outputs = pending.map(({ toolCallId, input }) => {
+
+    const worldOutputs = pendingWorldUpdates.map(({ toolCallId, input }) => {
       appliedWorldToolCallsRef.current.add(toolCallId);
-      const previousWorldState = nextWorldState;
+      const prev = nextWorldState;
       nextWorldState = applyWorldStateChange(nextWorldState, input);
       return {
         toolCallId,
         output: {
-          summary: summarizeWorldStateChange(previousWorldState, nextWorldState),
+          summary: summarizeWorldStateChange(prev, nextWorldState),
           snapshot: {
             location: nextWorldState.location,
             scene: nextWorldState.scene,
@@ -250,29 +269,7 @@ export default function Home() {
       };
     });
 
-    setWorldState(nextWorldState);
-    for (const { toolCallId, output } of outputs) {
-      addToolOutput({ tool: "updateWorldState", toolCallId, output });
-    }
-    void persistWorldState(sessionId, nextWorldState).catch((err) => {
-      setBootError(err instanceof Error ? err.message : "保存世界状态失败");
-    });
-  }, [messages, sessionId, worldState, addToolOutput]);
-
-  // Process giveItem tool calls
-  useEffect(() => {
-    if (!sessionId) return;
-    const pending = messages.flatMap((message) =>
-      message.parts.flatMap((part) => {
-        if (part.type !== "tool-giveItem" || part.state !== "input-available") return [];
-        if (appliedGiveItemCallsRef.current.has(part.toolCallId)) return [];
-        return [{ toolCallId: part.toolCallId, input: part.input as GiveItemInput }];
-      }),
-    );
-    if (pending.length === 0) return;
-
-    let nextWorldState = worldState;
-    const outputs = pending.map(({ toolCallId, input }) => {
+    const giveItemOutputs = pendingGiveItems.map(({ toolCallId, input }) => {
       appliedGiveItemCallsRef.current.add(toolCallId);
       const { item: resolvedItem, corrected } = reconcileItem(nextWorldState.itemRegistry, input.item);
       const newRegistry = nextWorldState.itemRegistry.find((d) => d.id === resolvedItem.id)
@@ -292,7 +289,10 @@ export default function Home() {
     });
 
     setWorldState(nextWorldState);
-    for (const { toolCallId, output } of outputs) {
+    for (const { toolCallId, output } of worldOutputs) {
+      addToolOutput({ tool: "updateWorldState", toolCallId, output });
+    }
+    for (const { toolCallId, output } of giveItemOutputs) {
       addToolOutput({ tool: "giveItem", toolCallId, output });
     }
     void persistWorldState(sessionId, nextWorldState).catch((err) => {
@@ -303,11 +303,13 @@ export default function Home() {
   // PLACEHOLDER_HANDLERS
 
   const busy = status === "streaming" || status === "submitted";
-  const playerDead = worldState.player.hp <= 0;
+  const playerDead = worldState !== null && worldState.player.hp <= 0;
   const activeSlot = saveSlots.find((slot) => slot.slotIndex === activeSlotIndex);
   const activeSlotHasSave = Boolean(activeSlot?.updatedAt);
+  const historyLoaded = loadPhase !== "idle" && loadPhase !== "loading";
+  const worldLoaded = loadPhase !== "idle" && loadPhase !== "loading";
   const chatReady =
-    historyLoaded && worldLoaded && configState.loaded && configState.hasSavedApiKey &&
+    loadPhase === "ready" && worldState !== null && configState.loaded && configState.hasSavedApiKey &&
     Boolean(configState.modelId.trim()) && !playerDead;
   const hasActiveProgress = messages.length > 0 || saveSlots.some((slot) => Boolean(slot.updatedAt));
 
@@ -324,7 +326,7 @@ export default function Home() {
   };
 
   const handleUseItem = (itemId: string) => {
-    if (busy || !sessionId || !chatReady) return;
+    if (busy || !sessionId || !chatReady || !worldState) return;
     const entry = worldState.player.inventory.find((e) => e.itemId === itemId);
     const def = worldState.itemRegistry.find((d) => d.id === itemId);
     if (!entry || !def || def.usage !== "panel") return;
@@ -367,8 +369,8 @@ export default function Home() {
   };
 
   const saveGame = async (slotIndex: number) => {
-    if (!sessionId || busy || saveBusy || loadBusy) return;
-    setSaveBusy(true);
+    if (!sessionId || busy || saveLoadStatus !== "idle") return;
+    setSaveLoadStatus("saving");
     setBootError(null);
     try {
       const res = await fetch("/api/save", {
@@ -384,14 +386,14 @@ export default function Home() {
     } catch (err) {
       setBootError(err instanceof Error ? err.message : "存档失败");
     } finally {
-      setSaveBusy(false);
+      setSaveLoadStatus("idle");
     }
   };
 
   const loadGame = async (slotIndex: number) => {
     const slot = saveSlots.find((item) => item.slotIndex === slotIndex);
-    if (!sessionId || busy || saveBusy || loadBusy || !slot?.updatedAt) return;
-    setLoadBusy(true);
+    if (!sessionId || busy || saveLoadStatus !== "idle" || !slot?.updatedAt) return;
+    setSaveLoadStatus("loading");
     setBootError(null);
     try {
       const res = await fetch("/api/save", {
@@ -412,7 +414,7 @@ export default function Home() {
     } catch (err) {
       setBootError(err instanceof Error ? err.message : "读档失败");
     } finally {
-      setLoadBusy(false);
+      setSaveLoadStatus("idle");
     }
   };
 
@@ -427,7 +429,7 @@ export default function Home() {
       enemy: { id: string; hp: number; maxHp: number; qi: number; maxQi: number };
     },
   ) => {
-    if (!sessionId) return;
+    if (!sessionId || !worldState) return;
     const nextNpc =
       worldState.activeNpc.id === result.enemy.id
         ? { ...worldState.activeNpc, hp: result.enemy.hp, maxHp: result.enemy.maxHp, qi: result.enemy.qi, maxQi: result.enemy.maxQi }
@@ -468,8 +470,7 @@ export default function Home() {
     setActiveSlotIndex(1);
     setSaveSlots(emptySaveSlots);
     setBootError(null);
-    setHistoryLoaded(true);
-    setWorldLoaded(true);
+    setLoadPhase("ready");
     setMenuOpen(false);
     pendingInitRef.current = true;
   };
@@ -512,7 +513,6 @@ export default function Home() {
       />
 
       <PlayerSidebar
-        player={worldState.player}
         worldState={worldState}
         busy={busy}
         onUseItem={handleUseItem}
@@ -578,17 +578,17 @@ export default function Home() {
                       type="button"
                       className="button"
                       onClick={() => void saveGame(slot.slotIndex)}
-                      disabled={!sessionId || busy || saveBusy || loadBusy}
+                      disabled={!sessionId || busy || saveLoadStatus !== "idle"}
                     >
-                      {saveBusy && activeSlotIndex === slot.slotIndex ? "存档中……" : "存档"}
+                      {saveLoadStatus === "saving" && activeSlotIndex === slot.slotIndex ? "存档中……" : "存档"}
                     </button>
                     <button
                       type="button"
                       className="button"
                       onClick={() => void loadGame(slot.slotIndex)}
-                      disabled={!sessionId || busy || saveBusy || loadBusy || !slot.updatedAt}
+                      disabled={!sessionId || busy || saveLoadStatus !== "idle" || !slot.updatedAt}
                     >
-                      {loadBusy && activeSlotIndex === slot.slotIndex ? "读档中……" : "读档"}
+                      {saveLoadStatus === "loading" && activeSlotIndex === slot.slotIndex ? "读档中……" : "读档"}
                     </button>
                   </div>
                 </article>

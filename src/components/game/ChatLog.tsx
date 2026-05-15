@@ -9,20 +9,16 @@ import { formatWorldTime, type WorldState } from "@/lib/game/schema";
 
 type GameUIMessage = UIMessage<never, Record<string, unknown>, InferUITools<typeof gameTools>>;
 
-function getMessageStatusSnapshot(message: GameUIMessage, fallback: WorldState) {
+function getMessageStatusSnapshot(message: GameUIMessage, fallback: WorldState | null) {
   const statusPart = [...message.parts]
     .reverse()
     .find((part) => part.type === "tool-updateWorldState" && part.state === "output-available") as
     | { output?: { snapshot?: { location: string; scene: string; time: WorldState["time"] } } }
     | undefined;
 
-  return (
-    statusPart?.output?.snapshot ?? {
-      location: fallback.location,
-      scene: fallback.scene,
-      time: fallback.time,
-    }
-  );
+  if (statusPart?.output?.snapshot) return statusPart.output.snapshot;
+  if (!fallback) return null;
+  return { location: fallback.location, scene: fallback.scene, time: fallback.time };
 }
 
 type CombatResult = {
@@ -34,7 +30,7 @@ type CombatResult = {
 
 type Props = {
   messages: GameUIMessage[];
-  worldState: WorldState;
+  worldState: WorldState | null;
   historyLoaded: boolean;
   worldLoaded: boolean;
   configReady: boolean;
@@ -108,6 +104,7 @@ export function ChatLog({
                   }
                   if (part.state === "input-available") {
                     const { combatType, enemy, triggerDescription } = part.input;
+                    if (!worldState) return null;
                     return (
                       <CombatPanel
                         key={`${m.id}-${i}`}
@@ -157,6 +154,7 @@ export function ChatLog({
               <div className="chat-status-bar">
                 {(() => {
                   const snapshot = getMessageStatusSnapshot(m, worldState);
+                  if (!snapshot) return null;
                   return (
                     <>
                       <span>地点：{snapshot.location}</span>

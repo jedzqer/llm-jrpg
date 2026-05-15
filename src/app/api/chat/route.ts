@@ -58,6 +58,9 @@ export async function POST(req: Request) {
 
   const normalizedMessages = normalizeChatMessages(messages);
   const worldState = loadWorldState(sessionId);
+  if (!worldState) {
+    return NextResponse.json({ error: "世界状态未初始化，请先新建或读取存档。" }, { status: 400 });
+  }
 
   const isInitialization = normalizedMessages.length === 1
     && normalizedMessages[0].role === "user"
